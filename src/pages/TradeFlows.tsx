@@ -33,7 +33,7 @@ export default function TradeFlows() {
                   }}
                 />
                 <CircleMarker center={[r.originLat, r.originLng]} radius={5} pathOptions={{ color: "#f59e0b", fillColor: "#f59e0b", fillOpacity: 0.9 }}>
-                  <Popup>{r.origin}</Popup>
+                  <Tooltip>{r.origin}</Tooltip>
                 </CircleMarker>
                 <CircleMarker center={[r.destLat, r.destLng]} radius={5} pathOptions={{ color: statusColor(r.legalStatus), fillColor: statusColor(r.legalStatus), fillOpacity: 0.9 }}>
                   <Popup>{r.destination}</Popup>
