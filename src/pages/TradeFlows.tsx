@@ -1,3 +1,4 @@
+import React from "react";
 import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip } from "react-leaflet";
 import { tradeRoutes } from "@/data/mockData";
 import { Badge } from "@/components/ui/badge";
