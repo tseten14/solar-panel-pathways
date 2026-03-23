@@ -1,3 +1,4 @@
+import React from "react";
 import { MapContainer, TileLayer, Polyline, CircleMarker, Tooltip } from "react-leaflet";
 import { tradeRoutes } from "@/data/mockData";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +22,7 @@ export default function TradeFlows() {
               [r.destLat, r.destLng],
             ];
             return (
-              <div key={r.id}>
+              <React.Fragment key={r.id}>
                 <Polyline
                   positions={positions}
                   pathOptions={{
@@ -37,7 +38,7 @@ export default function TradeFlows() {
                 <CircleMarker center={[r.destLat, r.destLng]} radius={5} pathOptions={{ color: statusColor(r.legalStatus), fillColor: statusColor(r.legalStatus), fillOpacity: 0.9 }}>
                   <Tooltip>{r.destination}</Tooltip>
                 </CircleMarker>
-              </div>
+              </React.Fragment>
             );
           })}
         </MapContainer>

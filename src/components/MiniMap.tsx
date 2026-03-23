@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, CircleMarker, Tooltip } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
 import { landfills } from "@/data/mockData";
 import "leaflet/dist/leaflet.css";
 
@@ -35,9 +35,9 @@ export function MiniMap() {
             weight: 1,
           }}
         >
-          <Tooltip>
+          <Popup>
             <span className="text-xs">{lf.name} — {lf.acceptsPV}</span>
-          </Tooltip>
+          </Popup>
         </CircleMarker>
       ))}
     </MapContainer>
