@@ -36,7 +36,7 @@ export default function TradeFlows() {
                   <Tooltip>{r.origin}</Tooltip>
                 </CircleMarker>
                 <CircleMarker center={[r.destLat, r.destLng]} radius={5} pathOptions={{ color: statusColor(r.legalStatus), fillColor: statusColor(r.legalStatus), fillOpacity: 0.9 }}>
-                  <Popup>{r.destination}</Popup>
+                  <Tooltip>{r.destination}</Tooltip>
                 </CircleMarker>
               </React.Fragment>
             );
