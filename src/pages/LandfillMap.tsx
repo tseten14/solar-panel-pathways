@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import { landfills, type Landfill } from "@/data/mockData";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,6 +16,7 @@ export default function LandfillMap() {
   const [ownershipFilter, setOwnershipFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [costRange, setCostRange] = useState([0, 150]);
+  const [selectedLandfillId, setSelectedLandfillId] = useState<string | null>(landfills[0]?.id ?? null);
 
   const filtered = useMemo(() => {
     return landfills.filter((l) => {
@@ -26,6 +27,8 @@ export default function LandfillMap() {
       return true;
     });
   }, [stateFilter, ownershipFilter, statusFilter, costRange]);
+
+  const selectedLandfill = filtered.find((l) => l.id === selectedLandfillId) ?? filtered[0] ?? null;
 
   return (
     <div className="flex h-[calc(100vh-3rem)]">
@@ -96,6 +99,13 @@ export default function LandfillMap() {
           <div className="flex items-center gap-2 text-xs"><span className="w-3 h-3 rounded-full bg-status-reject inline-block" /> Rejects</div>
           <div className="flex items-center gap-2 text-xs"><span className="w-3 h-3 rounded-full bg-status-conditional inline-block" /> Conditional</div>
         </div>
+
+        {selectedLandfill && (
+          <div className="pt-3 border-t border-border/50 space-y-2">
+            <p className="text-xs text-muted-foreground font-semibold">Selected Facility</p>
+            <LandfillPopup landfill={selectedLandfill} />
+          </div>
+        )}
       </div>
 
       {/* Map */}
@@ -113,11 +123,8 @@ export default function LandfillMap() {
               center={[lf.lat, lf.lng]}
               radius={8}
               pathOptions={{ color: statusColor(lf.acceptsPV), fillColor: statusColor(lf.acceptsPV), fillOpacity: 0.75, weight: 2 }}
-            >
-              <Popup>
-                <LandfillPopup landfill={lf} />
-              </Popup>
-            </CircleMarker>
+              eventHandlers={{ click: () => setSelectedLandfillId(lf.id) }}
+            />
           ))}
         </MapContainer>
       </div>
