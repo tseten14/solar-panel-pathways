@@ -35,9 +35,9 @@ export function MiniMap() {
             weight: 1,
           }}
         >
-          <Tooltip>
+          <Popup>
             <span className="text-xs">{lf.name} — {lf.acceptsPV}</span>
-          </Tooltip>
+          </Popup>
         </CircleMarker>
       ))}
     </MapContainer>
