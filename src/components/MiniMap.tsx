@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, CircleMarker, Tooltip } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup } from "react-leaflet";
 import { landfills } from "@/data/mockData";
 import "leaflet/dist/leaflet.css";
 
