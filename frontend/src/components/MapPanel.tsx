@@ -158,6 +158,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({
     const osmLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>',
       maxZoom: 19,
+      crossOrigin: "anonymous",
     });
 
     const satLayer = L.tileLayer(
@@ -165,6 +166,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({
       {
         attribution: '&copy; Google',
         maxZoom: 21,
+        crossOrigin: "anonymous",
       }
     );
 

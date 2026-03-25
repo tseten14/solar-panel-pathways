@@ -190,10 +190,11 @@ const DetectionOverlay = ({
                       <polygon
                         key={det.id}
                         points={pts}
-                        fill="hsla(50, 90%, 55%, 0.45)"
-                        stroke="hsl(50, 90%, 55%)"
-                        strokeWidth={1.5}
+                        fill="hsla(220, 100%, 30%, 0.65)"
+                        stroke="hsl(210, 100%, 60%)"
+                        strokeWidth={3}
                         className="cursor-pointer"
+                        style={{ filter: `drop-shadow(0 0 10px hsla(210, 100%, 60%, 0.7))` }}
                         onClick={() => setActiveTooltip(activeTooltip === det.id ? null : det.id)}
                       >
                         <title>{`${det.label} ${(det.confidence * 100).toFixed(1)}%`}</title>
@@ -293,24 +294,6 @@ function DetectionOutline({
             filter: `drop-shadow(0 0 6px ${color}66)`,
           }}
         />
-        <foreignObject
-          x={bbox.xmin}
-          y={Math.max(0, bbox.ymin - 24)}
-          width={120}
-          height={24}
-          className="overflow-visible"
-        >
-          <div
-            xmlns="http://www.w3.org/1999/xhtml"
-            className="flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold pointer-events-none"
-            style={{
-              background: color,
-              color: "hsl(220 20% 6%)",
-            }}
-          >
-            {detection.label}
-          </div>
-        </foreignObject>
       </g>
     );
   }
@@ -336,15 +319,6 @@ function DetectionOutline({
           filter: `drop-shadow(0 0 8px ${color}40)`,
         }}
       />
-      <foreignObject x={x} y={Math.max(0, y - 24)} width={120} height={24} className="overflow-visible">
-        <div
-          xmlns="http://www.w3.org/1999/xhtml"
-          className="flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-semibold pointer-events-none"
-          style={{ background: color, color: "hsl(220 20% 6%)" }}
-        >
-          {detection.label}
-        </div>
-      </foreignObject>
     </g>
   );
 }

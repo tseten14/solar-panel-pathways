@@ -291,11 +291,38 @@ const Index = () => {
     setIsProcessing(true);
     setStatusMessage("Capturing map view...");
     try {
-      setStatusMessage("Map capture disabled due to missing html2canvas dependency.");
+      const scanBounds: MapScanBounds | null =
+        scanMode === "satellite" ? mapPanelRef.current?.getVisibleMapBounds() ?? null : null;
+
+      // Use native canvas capture instead of html2canvas
+      const rect = el.getBoundingClientRect();
+      const scale = Math.min(3, Math.max(2, window.devicePixelRatio || 2));
+      const canvas = document.createElement("canvas");
+      canvas.width = rect.width * scale;
+      canvas.height = rect.height * scale;
+      const ctx = canvas.getContext("2d")!;
+      ctx.scale(scale, scale);
+
+      // Capture all tile images from the Leaflet map
+      const tiles = el.querySelectorAll<HTMLImageElement>("img.leaflet-tile");
+      for (const tile of tiles) {
+        try {
+          const tileRect = tile.getBoundingClientRect();
+          const x = tileRect.left - rect.left;
+          const y = tileRect.top - rect.top;
+          ctx.drawImage(tile, x, y, tileRect.width, tileRect.height);
+        } catch (_) { /* cross-origin tile, skip */ }
+      }
+
+      const blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Canvas capture failed"))), "image/png")
+      );
+      const file = new File([blob], "map-capture.png", { type: "image/png" });
       setIsProcessing(false);
+      runDetectionOnFile(file, scanMode, scanBounds);
     } catch (err) {
       console.error("Map capture failed:", err);
-      setStatusMessage("Map capture failed");
+      setStatusMessage("Map capture failed — try uploading a screenshot instead");
       setIsProcessing(false);
     }
   }, [isProcessing, runDetectionOnFile, API_BASE, detectionMode, detectionEngine]);

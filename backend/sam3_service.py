@@ -748,10 +748,10 @@ def run_detection(image_bytes: bytes, mode: str = "streetview") -> dict:
             scale_x=sx, scale_y=sy,
         )
 
-        # Merge labels to "building"
+        # Merge labels to "solar panel"
         for d in all_dets:
-            if d["label"] != "building":
-                d["label"] = "building"
+            if d["label"] != "solar panel":
+                d["label"] = "solar panel"
 
         # Remove extremely oversized detections (>12% of image).
         img_area = w * h
