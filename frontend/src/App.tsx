@@ -10,6 +10,7 @@ import TradeFlows from "./pages/TradeFlows";
 import MLPredictions from "./pages/MLPredictions";
 import DataTable from "./pages/DataTable";
 import NotFound from "./pages/NotFound";
+import SolarMap from "./pages/SolarMap";
 
 const queryClient = new QueryClient();
 
@@ -26,6 +27,7 @@ const App = () => (
             <Route path="/trade-flows" element={<TradeFlows />} />
             <Route path="/predictions" element={<MLPredictions />} />
             <Route path="/data" element={<DataTable />} />
+            <Route path="/solar-map" element={<SolarMap />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AppLayout>

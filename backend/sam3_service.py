@@ -1,0 +1,823 @@
+
+# SAM 3 (Segment Anything Model 3) detection service.
+# Uses Hugging Face transformers for promptable concept segmentation.
+import os
+import io
+import time
+import logging
+from typing import Any
+
+import cv2
+import numpy as np
+from PIL import Image
+
+logger = logging.getLogger("uvicorn.error")
+
+# Entrance-focused prompts for street view mode.
+
+# SAM 3 is promptable: for each text prompt, the model returns instance segmentation
+# masks for any regions matching the prompt.
+
+# Street-level imagery contains many “door-like”/“entrance-like” visual patterns
+# (including reflective glass storefronts), so we use multiple entrance synonyms.
+STREETVIEW_PROMPTS = [
+    "solar panel",
+    "photovoltaic array",
+    "solar array",
+]
+
+# Building-focused prompts for satellite/aerial view mode.
+
+# Satellite imagery varies (roofs, houses, outlines). Using a small prompt set of
+# synonyms improves recall without multiplying compute too much.
+SATELLITE_PROMPTS = [
+    "solar panel",
+    "photovoltaic array",
+    "solar array",
+]
+
+# Batch multiple prompts together can sometimes increase throughput, but on
+# some hardware it may increase latency/memory pressure.
+# Defaulting back to 1 matches the previous (older) behavior.
+_BATCH_SIZE = 1
+# Max dimension for inference — larger images are downscaled to reduce compute and RAM
+_MAX_INFER_DIM = 768
+
+_model: Any = None
+_processor: Any = None
+
+# Device selection impacts both speed and memory usage.
+_device: str = "cpu"
+_dtype: Any = None
+
+
+def _get_device() -> str:
+    # Choose where Torch runs inference.
+    
+    # Priority:
+    # - CUDA if available (NVIDIA GPU)
+    # - MPS if available (Apple Silicon GPU)
+    # - CPU fallback (always works, slower)
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
+
+def load_sam3() -> bool:
+    # Load SAM 3 model and processor. Returns True on success.
+    global _model, _processor, _device, _dtype
+    if _model is not None:
+        return True
+
+    try:
+        import torch
+        from transformers import Sam3Model, Sam3Processor
+
+        # Load/cached initialization: we only do this once and then reuse
+        # the same model+processor objects for subsequent requests.
+        _device = _get_device()
+        _dtype = torch.float32
+
+        logger.info(f"Loading SAM 3 on {_device}…")
+
+        # SAM 3 is gated on Hugging Face. If you have access, provide a token
+        # via env vars so `from_pretrained()` can download weights.
+        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        if token:
+            os.environ["HF_TOKEN"] = token
+
+        _processor = Sam3Processor.from_pretrained(
+            "facebook/sam3",
+            token=token,
+        )
+        _model = Sam3Model.from_pretrained(
+            "facebook/sam3",
+            token=token,
+        ).to(_device)
+        _model.eval()
+
+        logger.info("SAM 3 ready.")
+        return True
+    except Exception as e:
+        logger.error(f"SAM 3 failed to load: {e}")
+        return False
+
+
+def _iou(box_a: dict, box_b: dict) -> float:
+    # Compute IoU between two boxes (xmin, ymin, xmax, ymax).
+    ix1 = max(box_a["xmin"], box_b["xmin"])
+    iy1 = max(box_a["ymin"], box_b["ymin"])
+    ix2 = min(box_a["xmax"], box_b["xmax"])
+    iy2 = min(box_a["ymax"], box_b["ymax"])
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    inter = (ix2 - ix1) * (iy2 - iy1)
+    area_a = (box_a["xmax"] - box_a["xmin"]) * (box_a["ymax"] - box_a["ymin"])
+    area_b = (box_b["xmax"] - box_b["xmin"]) * (box_b["ymax"] - box_b["ymin"])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _nms(
+    detections: list[dict],
+    iou_threshold: float = 0.5,
+    *,
+    entrance_suppress_iou: float | None = None,
+) -> list[dict]:
+    # Non-maximum suppression (NMS) by confidence.
+    
+    # Why this is customized:
+    # - Urban imagery generates many *overlapping* boxes for the same physical structure.
+    # - However, adjacent structures (e.g., two neighboring buildings) may also overlap
+    # slightly in the model's bbox space.
+    
+    # To avoid deleting legitimate neighboring buildings, we use:
+    # - a higher threshold for "road"/"sidewalk" to keep continuous surface regions
+    # - a more lenient threshold for "building" so neighbors survive
+    # - a stricter threshold for other same-class labels
+    #
+    # entrance_suppress_iou: optional higher IoU bar for two "entrance" boxes (YOLO-World:
+    # door vs adjacent window on same porch).
+    if not detections:
+        return []
+    sorted_dets = sorted(detections, key=lambda d: d["confidence"], reverse=True)
+    keep: list[dict] = []
+    for det in sorted_dets:
+        keep_it = True
+        for k in keep:
+            iou = _iou(det["bbox"], k["bbox"])
+            thresh = iou_threshold
+            if {det["label"], k["label"]} <= {"road", "sidewalk"}:
+                thresh = 0.85
+            elif det["label"] == k["label"]:
+                # Buildings need lenient NMS — adjacent buildings have slight overlap
+                if det["label"] == "building":
+                    thresh = 0.55
+                elif det["label"] == "entrance" and entrance_suppress_iou is not None:
+                    thresh = entrance_suppress_iou
+                else:
+                    thresh = 0.35
+            if iou > thresh:
+                keep_it = False
+                break
+        if keep_it:
+            keep.append(det)
+    return keep
+
+
+def _overlap_ratio(box_a: dict, box_b: dict) -> float:
+    # Intersection over box_a area (how much of A is covered by B).
+    ix1 = max(box_a["xmin"], box_b["xmin"])
+    iy1 = max(box_a["ymin"], box_b["ymin"])
+    ix2 = min(box_a["xmax"], box_b["xmax"])
+    iy2 = min(box_a["ymax"], box_b["ymax"])
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    inter = (ix2 - ix1) * (iy2 - iy1)
+    area_a = (box_a["xmax"] - box_a["xmin"]) * (box_a["ymax"] - box_a["ymin"])
+    return inter / area_a if area_a > 0 else 0.0
+
+
+def _filter_person_building_overlap(detections: list[dict], img_w: int, img_h: int) -> list[dict]:
+    # Filter out common street-view false positives where the model mistakes part of a facade
+    # for a "person" concept.
+    
+    # We keep "person" detections only if:
+    # - their bbox area is not unrealistically large
+    # - they are not almost entirely contained inside a detected building bbox
+    buildings = [d for d in detections if d["label"] == "building"]
+    persons = [d for d in detections if d["label"] == "person"]
+    others = [d for d in detections if d["label"] not in ("building", "person")]
+
+    img_area = img_w * img_h
+    filtered_persons: list[dict] = []
+    for p in persons:
+        p_area = (p["bbox"]["xmax"] - p["bbox"]["xmin"]) * (p["bbox"]["ymax"] - p["bbox"]["ymin"])
+        # Remove if person bbox is unrealistically large (>18% of image - likely misdetected building)
+        if p_area > 0.18 * img_area:
+            continue
+        # Only remove if person is almost entirely inside a building (>70% overlap = likely false positive)
+        overlap_any = any(_overlap_ratio(p["bbox"], b["bbox"]) > 0.70 for b in buildings)
+        if overlap_any:
+            continue
+        filtered_persons.append(p)
+
+    return buildings + filtered_persons + others
+
+
+def _filter_google_map_signs(detections: list[dict]) -> list[dict]:
+    # Remove sign detections that come from Street View navigation UI overlays.
+    
+    # Those arrow graphics often lie on road/pavement tiles; if a detected "sign" bbox
+    # overlaps a road bbox beyond a threshold, we drop it.
+    roads = [d for d in detections if d["label"] == "road"]
+    signs = [d for d in detections if d["label"] == "sign"]
+    others = [d for d in detections if d["label"] not in ("sign", "road")]
+
+    filtered_signs: list[dict] = []
+    for s in signs:
+        # Skip signs on road surface - Google nav arrows are overlaid on pavement
+        if any(_overlap_ratio(s["bbox"], r["bbox"]) > 0.25 for r in roads):
+            continue
+        filtered_signs.append(s)
+
+    return roads + filtered_signs + others
+
+
+def _filter_sign_pole_on_building(detections: list[dict]) -> list[dict]:
+    # Filter sign/pole detections that are likely false positives caused by overlaps
+    # with building edges.
+    
+    # If a sign/pole bbox overlaps building bboxes too much, we discard it.
+    buildings = [d for d in detections if d["label"] == "building"]
+    signs = [d for d in detections if d["label"] == "sign"]
+    poles = [d for d in detections if d["label"] == "pole"]
+    others = [d for d in detections if d["label"] not in ("sign", "pole", "building")]
+
+    def keep_det(d: dict) -> bool:
+        return not any(_overlap_ratio(d["bbox"], b["bbox"]) > 0.35 for b in buildings)
+
+    filtered_signs = [s for s in signs if keep_det(s)]
+    filtered_poles = [p for p in poles if keep_det(p)]
+
+    return others + buildings + filtered_signs + filtered_poles
+
+
+def _filter_car_doors(detections: list[dict]) -> list[dict]:
+    # Remove door-like detections that overlap vehicles.
+    
+    # Street view imagery often contains cars/trucks parked near the facade. The model can
+    # incorrectly segment vehicle doors/shapes using the same prompt vocabulary as building
+    # entrances. Since this app is focused on building entrance areas, we drop those
+    # door detections when they significantly overlap a detected vehicle bbox.
+    vehicles = [d for d in detections if d["label"] in ("car", "truck")]
+    doors = [d for d in detections if d["label"] == "door"]
+    others = [d for d in detections if d["label"] not in ("door", "car", "truck")]
+
+    filtered_doors: list[dict] = []
+    for door in doors:
+        # Skip doors that overlap significantly with a vehicle (car doors)
+        if any(_overlap_ratio(door["bbox"], v["bbox"]) > 0.4 for v in vehicles):
+            continue
+        filtered_doors.append(door)
+
+    return others + vehicles + filtered_doors
+
+
+_SOLAR_PANEL_LABELS = {
+    "solar panel",
+    "photovoltaic array",
+    "solar array",
+}
+
+
+def _merge_entrance_detections(detections: list[dict]) -> list[dict]:
+    # Merge multiple overlapping entrance detections into a single entrance.
+    
+    # This is mainly to avoid separate boxes for each leaf of a glass double-door.
+    # We keep the highest-confidence detection and expand its bbox to cover the union.
+    entrances = [d for d in detections if d["label"] in _ENTRANCE_LABELS]
+    others = [d for d in detections if d["label"] not in _ENTRANCE_LABELS]
+
+    if not entrances:
+        return detections
+
+    # Sort by confidence so first seen is the strongest instance
+    entrances_sorted = sorted(entrances, key=lambda d: d["confidence"], reverse=True)
+    merged: list[dict] = []
+
+    for det in entrances_sorted:
+        placed = False
+        for m in merged:
+            # Use IoU to decide whether this is part of the same physical entrance
+            if _iou(det["bbox"], m["bbox"]) > 0.3:
+                b = det["bbox"]
+                mb = m["bbox"]
+                m["bbox"] = {
+                    "xmin": min(mb["xmin"], b["xmin"]),
+                    "ymin": min(mb["ymin"], b["ymin"]),
+                    "xmax": max(mb["xmax"], b["xmax"]),
+                    "ymax": max(mb["ymax"], b["ymax"]),
+                }
+                # Keep polygon of the higher-confidence detection (already m)
+                placed = True
+                break
+        if not placed:
+            merged.append(det)
+
+    # Normalize label to a single semantic class for UI consistency
+    for m in merged:
+        m["label"] = "door"
+
+    return others + merged
+
+
+def _filter_first_floor_entrances(detections: list[dict], img_h: int) -> list[dict]:
+    # Keep ground-level entrances; drop bbox centers in the top ~35% of the frame (y grows
+    # downward). A stricter rule (e.g. keep only bottom 45%) removed valid doors near the
+    # vertical middle of many Street View shots.
+    # Keep entrances whose bbox center is not in the *top* of the frame (upper floors).
+    # y grows downward; 0.55 meant "keep only bottom 45%" and removed many valid doors
+    # that sit near the vertical middle of Street View. Use ~0.35 so doors slightly
+    # above mid-frame (common Street View framing) still pass.
+    FIRST_FLOOR_MIN_CENTER_Y_RATIO = 0.35
+
+    entrances = [d for d in detections if d["label"] in _ENTRANCE_LABELS]
+    others = [d for d in detections if d["label"] not in _ENTRANCE_LABELS]
+
+    kept: list[dict] = []
+    y_min_keep = FIRST_FLOOR_MIN_CENTER_Y_RATIO * img_h
+    for e in entrances:
+        yc = (e["bbox"]["ymin"] + e["bbox"]["ymax"]) / 2.0
+        # Keep if bbox center is not in the top 35% of the image (y downward).
+        if yc >= y_min_keep:
+            kept.append(e)
+
+    return others + kept
+
+
+def _merge_sidewalk_detections(detections: list[dict], img_h: int) -> list[dict]:
+    # Keep at most 2 sidewalk detections (largest by area).
+    sidewalks = [d for d in detections if d["label"] == "sidewalk"]
+    others = [d for d in detections if d["label"] != "sidewalk"]
+
+    if len(sidewalks) <= 2:
+        return detections
+
+    def bbox_area(d: dict) -> float:
+        b = d["bbox"]
+        return (b["xmax"] - b["xmin"]) * (b["ymax"] - b["ymin"])
+
+    # Keep only the 1 largest sidewalk region
+    sorted_sw = sorted(sidewalks, key=bbox_area, reverse=True)
+    return others + sorted_sw[:1]
+
+
+# Max detections per class - keeps only highest-confidence to reduce noise
+_MAX_PER_CLASS: dict[str, int] = {
+    "road": 1,
+    "sidewalk": 1,
+    "building": 300,
+    "house": 300,
+    "structure": 300,
+    "building footprint": 300,
+    "door": 3,
+    "entrance": 8,
+    "car": 5,
+    "truck": 2,
+    "person": 2,
+    "bicycle": 2,
+    "tree": 4,
+    "vegetation": 2,
+    "grass": 2,
+    "pole": 4,
+    "sign": 3,
+    "street light": 3,
+    "trash can": 1,
+    "bench": 1,
+    "fire hydrant": 1,
+    "mailbox": 1,
+    "traffic light": 2,
+    "bus": 2,
+    "motorcycle": 1,
+}
+
+
+def _cap_per_class(detections: list[dict]) -> list[dict]:
+    # Keep only top N detections per class by confidence.
+    by_label: dict[str, list[dict]] = {}
+    for d in detections:
+        lbl = d["label"]
+        by_label.setdefault(lbl, []).append(d)
+
+    result: list[dict] = []
+    for lbl, dets in by_label.items():
+        cap = _MAX_PER_CLASS.get(lbl, 4)  # default 4 for unlisted
+        sorted_dets = sorted(dets, key=lambda x: x["confidence"], reverse=True)
+        result.extend(sorted_dets[:cap])
+    return result
+
+
+_MIN_AREA_BY_LABEL: dict[str, int] = {
+    "door": 400,
+    "revolving door": 400,
+    "glass entrance": 400,
+    "storefront entrance": 400,
+    "building entrance": 400,
+    "person": 500,
+    # Allow smaller building footprints so small houses and sheds are kept.
+    "building": 70,
+    "house": 70,
+    "structure": 70,
+    "building footprint": 70,
+}
+
+
+def _min_area(bbox: dict, label: str = "", min_pixels: int = 1500) -> bool:
+    w = bbox["xmax"] - bbox["xmin"]
+    h = bbox["ymax"] - bbox["ymin"]
+    threshold = _MIN_AREA_BY_LABEL.get(label, min_pixels)
+    return w * h >= threshold
+
+
+def _tensor_batch_len(x: Any) -> int:
+    # Number of instances along dim 0 (boxes/scores/masks from SAM3 post-process).
+    if x is None:
+        return 0
+    if hasattr(x, "shape") and len(getattr(x, "shape", ())) > 0:
+        return int(x.shape[0])
+    return len(x)
+
+
+def _to_float_score(x: Any) -> float:
+    if hasattr(x, "detach"):
+        return float(x.detach().cpu().item())
+    return float(x)
+
+
+def _xyxy_from_box(box: Any) -> tuple[float, float, float, float]:
+    # Normalize box to 4 floats whether it is a tensor slice, ndarray, or nested list.
+    if hasattr(box, "detach"):
+        flat = box.detach().cpu().flatten().tolist()
+    elif hasattr(box, "tolist"):
+        flat = box.tolist()
+    else:
+        flat = list(box)  # type: ignore[arg-type]
+    while len(flat) == 1 and isinstance(flat[0], (list, tuple)):
+        flat = list(flat[0])
+    if len(flat) != 4:
+        raise ValueError(f"expected 4 box coordinates, got {flat!r}")
+    return float(flat[0]), float(flat[1]), float(flat[2]), float(flat[3])
+
+
+def _clip_polygon_to_bounds(pts: list[list[float]], img_w: int, img_h: int) -> list[list[float]] | None:
+    # Clip polygon points to image bounds so outlines stay inside the frame.
+    if not pts:
+        return None
+    clipped = []
+    for x, y in pts:
+        cx = max(0.0, min(float(img_w), x))
+        cy = max(0.0, min(float(img_h), y))
+        clipped.append([cx, cy])
+    # Remove consecutive duplicates
+    deduped = [clipped[0]]
+    for p in clipped[1:]:
+        if abs(p[0] - deduped[-1][0]) > 1e-6 or abs(p[1] - deduped[-1][1]) > 1e-6:
+            deduped.append(p)
+    if len(deduped) < 3:
+        return None
+    return deduped
+
+
+def _prepare_mask(mask, img_w: int, img_h: int):
+    # Shared mask preprocessing: squeeze, threshold, crop, upsample, morphology.
+    if mask is None:
+        return None, 0, 0
+    arr = np.asarray(mask)
+    if arr.ndim > 2:
+        arr = arr.squeeze()
+    if arr.ndim != 2:
+        return None, 0, 0
+    if arr.dtype != np.uint8:
+        arr = (arr > 0.5).astype(np.uint8)
+    h_lim, w_lim = min(arr.shape[0], img_h), min(arr.shape[1], img_w)
+    arr = arr[:h_lim, :w_lim]
+    mh, mw = arr.shape[0], arr.shape[1]
+    if mw < img_w or mh < img_h:
+        arr = cv2.resize(arr, (img_w, img_h), interpolation=cv2.INTER_LINEAR)
+        arr = (arr > 0.5).astype(np.uint8)
+        mh, mw = arr.shape[0], arr.shape[1]
+    kernel = np.ones((3, 3), np.uint8)
+    arr = cv2.morphologyEx(arr, cv2.MORPH_CLOSE, kernel)
+    arr = cv2.dilate(arr, kernel)
+    return arr, mh, mw
+
+
+def _contour_to_polygon(cnt, mw: int, mh: int, img_w: int, img_h: int) -> list[list[float]] | None:
+    # Convert a single OpenCV contour to a clipped polygon.
+    if len(cnt) < 3:
+        return None
+    peri = cv2.arcLength(cnt, True)
+    epsilon = max(0.5, peri * 0.0005)
+    cnt = cv2.approxPolyDP(cnt, epsilon, True)
+    if len(cnt) < 3:
+        return None
+    pts = cnt.reshape(-1, 2).tolist()
+    pts = [[float(x), float(y)] for x, y in pts]
+    sx = img_w / max(1, mw)
+    sy = img_h / max(1, mh)
+    pts = [[x * sx, y * sy] for x, y in pts]
+    return _clip_polygon_to_bounds(pts, img_w, img_h)
+
+
+def _mask_to_polygon(mask, img_w: int, img_h: int) -> list[list[float]] | None:
+    # Extract the single largest polygon contour from binary mask (street view mode).
+    arr, mh, mw = _prepare_mask(mask, img_w, img_h)
+    if arr is None:
+        return None
+    contours, _ = cv2.findContours(arr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return None
+    cnt = max(contours, key=cv2.contourArea)
+    return _contour_to_polygon(cnt, mw, mh, img_w, img_h)
+
+
+_SAT_MIN_CONTOUR_AREA = 80  # minimum contour area in pixels for satellite buildings
+
+
+def _mask_to_all_polygons(mask, img_w: int, img_h: int) -> list[dict]:
+    # Extract ALL contours from a mask as separate polygons (satellite mode).
+    # Returns list of {polygon, bbox} dicts — one per detected building.
+    arr, mh, mw = _prepare_mask(mask, img_w, img_h)
+    if arr is None:
+        return []
+    contours, _ = cv2.findContours(arr, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return []
+
+    sx = img_w / max(1, mw)
+    sy = img_h / max(1, mh)
+    results = []
+    for cnt in contours:
+        if cv2.contourArea(cnt) < _SAT_MIN_CONTOUR_AREA:
+            continue
+        poly = _contour_to_polygon(cnt, mw, mh, img_w, img_h)
+        if not poly:
+            continue
+        x, y, cw, ch = cv2.boundingRect(cnt)
+        bbox = {
+            "xmin": x * sx,
+            "ymin": y * sy,
+            "xmax": (x + cw) * sx,
+            "ymax": (y + ch) * sy,
+        }
+        results.append({"polygon": poly, "bbox": bbox})
+    return results
+
+
+def _run_inference_pass(
+    infer_image: Image.Image,
+    prompts: list[str],
+    infer_w: int,
+    infer_h: int,
+    confidence_threshold: float,
+    mask_threshold: float,
+    mode: str,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+    scale_x: float = 1.0,
+    scale_y: float = 1.0,
+) -> list[dict]:
+    # Run one SAM 3 inference pass for a given image crop and concept prompt list.
+    
+    # Inputs:
+    # - `infer_image`: PIL image crop to run inference on
+    # - `prompts`: text concepts to evaluate (street view vs satellite differs)
+    # - `infer_w`/`infer_h`: dimensions of the crop in pixels
+    # - `offset_x`/`offset_y`: where this crop sits within the full image
+    # - `scale_x`/`scale_y`: mapping from crop space back to full-image space
+    
+    # Output:
+    # - list of dict detections containing:
+    # - `label`: the prompt/concept that produced this instance
+    # - `confidence`: score from SAM 3 post-processing
+    # - `bbox`: bounding box mapped into full-image coordinates
+    # - `polygon`: polygon outline derived from the segmentation mask (when available)
+    import torch
+
+    dets: list[dict] = []
+
+    for batch_start in range(0, len(prompts), _BATCH_SIZE):
+        batch_prompts = prompts[batch_start : batch_start + _BATCH_SIZE]
+        batch_images = [infer_image] * len(batch_prompts)
+
+        try:
+            inputs = _processor(
+                images=batch_images,
+                text=batch_prompts,
+                return_tensors="pt",
+            ).to(_device)
+
+            target_sizes = inputs.get("original_sizes")
+            if target_sizes is not None and hasattr(target_sizes, "tolist"):
+                target_sizes = target_sizes.tolist()
+            else:
+                target_sizes = [[infer_h, infer_w]] * len(batch_prompts)
+
+            with torch.inference_mode():
+                outputs = _model(**inputs)
+
+            results = _processor.post_process_instance_segmentation(
+                outputs,
+                threshold=confidence_threshold,
+                mask_threshold=mask_threshold,
+                target_sizes=target_sizes,
+            )
+
+            for prompt, result in zip(batch_prompts, results):
+                boxes = result.get("boxes", [])
+                scores = result.get("scores", [])
+                masks = result.get("masks", [])
+
+                n_inst = min(_tensor_batch_len(boxes), _tensor_batch_len(scores))
+                n_masks = _tensor_batch_len(masks)
+
+                for i in range(n_inst):
+                    score_f = _to_float_score(scores[i])
+                    if score_f < confidence_threshold:
+                        continue
+
+                    if mode == "satellite" and i < n_masks:
+                        mask_arr = masks[i]
+                        if hasattr(mask_arr, "cpu"):
+                            mask_arr = mask_arr.cpu().numpy()
+                        sub_polys = _mask_to_all_polygons(mask_arr, infer_w, infer_h)
+                        for sp in sub_polys:
+                            sb = sp["bbox"]
+                            sb = {
+                                "xmin": sb["xmin"] * scale_x + offset_x,
+                                "ymin": sb["ymin"] * scale_y + offset_y,
+                                "xmax": sb["xmax"] * scale_x + offset_x,
+                                "ymax": sb["ymax"] * scale_y + offset_y,
+                            }
+                            poly = [
+                                [px * scale_x + offset_x, py * scale_y + offset_y]
+                                for px, py in sp["polygon"]
+                            ]
+                            dets.append({
+                                "label": prompt,
+                                "confidence": score_f,
+                                "bbox": sb,
+                                "polygon": poly,
+                            })
+                        continue
+
+                    try:
+                        x1, y1, x2, y2 = _xyxy_from_box(boxes[i])
+                    except (ValueError, TypeError) as err:
+                        logger.warning("Bad box tensor for prompt %r: %s", prompt, err)
+                        continue
+                    bbox = {"xmin": x1, "ymin": y1, "xmax": x2, "ymax": y2}
+                    if not _min_area(bbox, label=prompt):
+                        continue
+                    polygon = None
+                    if i < n_masks:
+                        mask_arr = masks[i]
+                        if hasattr(mask_arr, "cpu"):
+                            mask_arr = mask_arr.cpu().numpy()
+                        polygon = _mask_to_polygon(mask_arr, infer_w, infer_h)
+                    bbox = {
+                        "xmin": bbox["xmin"] * scale_x + offset_x,
+                        "ymin": bbox["ymin"] * scale_y + offset_y,
+                        "xmax": bbox["xmax"] * scale_x + offset_x,
+                        "ymax": bbox["ymax"] * scale_y + offset_y,
+                    }
+                    if polygon:
+                        polygon = [
+                            [px * scale_x + offset_x, py * scale_y + offset_y]
+                            for px, py in polygon
+                        ]
+                    dets.append({
+                        "label": prompt,
+                        "confidence": score_f,
+                        "bbox": bbox,
+                        "polygon": polygon,
+                    })
+        except Exception as e:
+            logger.warning("SAM3 batch failed prompts=%s: %s", batch_prompts, e, exc_info=True)
+            continue
+
+    return dets
+
+
+def _generate_tiles(w: int, h: int, tile_size: int, overlap: float = 0.25):
+    # Yield (x, y, crop_w, crop_h) tiles covering the full image with overlap.
+    step = int(tile_size * (1 - overlap))
+    for y in range(0, h, step):
+        for x in range(0, w, step):
+            cw = min(tile_size, w - x)
+            ch = min(tile_size, h - y)
+            if cw < tile_size * 0.4 or ch < tile_size * 0.4:
+                continue
+            yield x, y, cw, ch
+
+
+def run_detection(image_bytes: bytes, mode: str = "streetview") -> dict:
+    # Run SAM 3 detection on image. Returns dict compatible with DetectionResult:
+    # { image_width, image_height, detections, processing_time_s }
+    
+    # mode: "streetview" for door detection, "satellite" for building detection.
+    # Satellite mode uses multi-scale tiled inference for comprehensive coverage.
+    if not load_sam3():
+        raise RuntimeError("SAM 3 model not loaded")
+
+    prompts = SATELLITE_PROMPTS if mode == "satellite" else STREETVIEW_PROMPTS
+
+    start = time.perf_counter()
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    w, h = image.size
+
+    all_dets: list[dict] = []
+
+    if mode == "satellite":
+        # Balance recall vs speed: single high-res pass so scans stay under ~5–10s.
+        confidence_threshold = 0.22
+        mask_threshold = 0.45
+
+        max_dim = 1300
+        infer_image = image
+        sx, sy = 1.0, 1.0
+        if max(w, h) > max_dim:
+            ratio = max_dim / max(w, h)
+            iw, ih = int(w * ratio), int(h * ratio)
+            infer_image = image.resize((iw, ih), Image.Resampling.LANCZOS)
+            sx, sy = w / iw, h / ih
+        else:
+            iw, ih = w, h
+
+        logger.info(f"Satellite: single pass {iw}x{ih}")
+        all_dets = _run_inference_pass(
+            infer_image, prompts, iw, ih,
+            confidence_threshold, mask_threshold, mode,
+            scale_x=sx, scale_y=sy,
+        )
+
+        # Merge labels to "building"
+        for d in all_dets:
+            if d["label"] != "building":
+                d["label"] = "building"
+
+        # Remove extremely oversized detections (>12% of image).
+        img_area = w * h
+        all_dets = [
+            d for d in all_dets
+            if (d["bbox"]["xmax"] - d["bbox"]["xmin"])
+            * (d["bbox"]["ymax"] - d["bbox"]["ymin"])
+            < 0.12 * img_area
+        ]
+        # Slightly looser NMS than the original to keep dense blocks, but faster
+        # than the multi-pass tiled version.
+        all_dets = _nms(all_dets, iou_threshold=0.6)
+
+    else:
+        # Street view: keep scores closer to HF defaults (0.3); 0.5 was dropping most doors.
+        confidence_threshold = 0.32
+        street_mask_threshold = 0.45
+
+        max_dim = _MAX_INFER_DIM
+        infer_image = image
+        sx, sy = 1.0, 1.0
+        if max(w, h) > max_dim:
+            ratio = max_dim / max(w, h)
+            iw, ih = int(w * ratio), int(h * ratio)
+            infer_image = image.resize((iw, ih), Image.Resampling.LANCZOS)
+            sx, sy = w / iw, h / ih
+        else:
+            iw, ih = w, h
+
+        all_dets = _run_inference_pass(
+            infer_image, prompts, iw, ih,
+            confidence_threshold, street_mask_threshold, mode,
+            scale_x=sx, scale_y=sy,
+        )
+        all_dets = _nms(all_dets, iou_threshold=0.6)
+
+    all_dets = _cap_per_class(all_dets)
+    elapsed_s = round(time.perf_counter() - start, 3)
+
+    detections = []
+    for i, d in enumerate(all_dets):
+        label = d["label"]
+        # Normalize any solar panel related label to a single canonical label.
+        if label in _SOLAR_PANEL_LABELS:
+            label = "solar panel"
+        det = {
+            "id": f"det_{i}",
+            "label": label,
+            "confidence": d["confidence"],
+            "bbox": d["bbox"],
+        }
+        if d.get("polygon"):
+            det["polygon"] = d["polygon"]
+        detections.append(det)
+
+    logger.info(
+        "Detection complete: %d objects in %.3fs (%s)",
+        len(detections),
+        elapsed_s,
+        mode,
+    )
+
+    return {
+        "image_width": w,
+        "image_height": h,
+        "detections": detections,
+        "processing_time_s": elapsed_s,
+        "engine": "sam3",
+    }
