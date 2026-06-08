@@ -1,48 +1,81 @@
 import { useState, useMemo } from "react";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
-import { landfills, type Landfill } from "@/data/mockData";
-import { Input } from "@/components/ui/input";
+import type { Landfill } from "@/types/landfill";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
+import { useLandfills } from "@/hooks/useLandfills";
+import { useSolarFacilitiesByState } from "@/hooks/useSolarData";
+import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import "leaflet/dist/leaflet.css";
 
-const statusColor = (s: string) => (s === "Yes" ? "#22c55e" : s === "No" ? "#ef4444" : "#eab308");
-
-const states = [...new Set(landfills.map((l) => l.state))].sort();
+const statusColor = (s: string) => {
+  if (s === "Yes") return "#22c55e";
+  if (s === "No") return "#ef4444";
+  if (s === "Conditional") return "#eab308";
+  return "#64748b";
+};
 
 export default function LandfillMap() {
+  const { data: landfills = [], isLoading, isError, refetch } = useLandfills();
   const [stateFilter, setStateFilter] = useState("all");
   const [ownershipFilter, setOwnershipFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [costRange, setCostRange] = useState([0, 150]);
-  const [selectedLandfillId, setSelectedLandfillId] = useState<string | null>(landfills[0]?.id ?? null);
+  const [showSolar, setShowSolar] = useState(false);
+  const [selectedLandfillId, setSelectedLandfillId] = useState<string | null>(null);
+
+  const states = useMemo(
+    () => [...new Set(landfills.map((l) => l.state).filter((s) => s !== "—"))].sort(),
+    [landfills],
+  );
+
+  const solarState = showSolar && stateFilter !== "all" ? stateFilter : null;
+  const { data: solarFacilities = [] } = useSolarFacilitiesByState(solarState);
 
   const filtered = useMemo(() => {
     return landfills.filter((l) => {
       if (stateFilter !== "all" && l.state !== stateFilter) return false;
       if (ownershipFilter !== "all" && l.ownership !== ownershipFilter) return false;
       if (statusFilter !== "all" && l.acceptsPV !== statusFilter) return false;
-      if (l.tippingFee !== null && (l.tippingFee < costRange[0] || l.tippingFee > costRange[1])) return false;
       return true;
     });
-  }, [stateFilter, ownershipFilter, statusFilter, costRange]);
+  }, [landfills, stateFilter, ownershipFilter, statusFilter]);
 
-  const selectedLandfill = filtered.find((l) => l.id === selectedLandfillId) ?? filtered[0] ?? null;
+  const selectedLandfill =
+    filtered.find((l) => l.id === selectedLandfillId) ?? filtered[0] ?? null;
+
+  if (isLoading) {
+    return <DataLoadingState message="Loading landfill map data from EPA LMOP…" />;
+  }
+
+  if (isError) {
+    return (
+      <DataErrorState message="Failed to load landfill data from EPA LMOP." onRetry={() => refetch()} />
+    );
+  }
 
   return (
     <div className="flex h-[calc(100vh-3rem)]">
-      {/* Sidebar filters */}
       <div className="w-64 shrink-0 border-r border-border/50 bg-card/30 p-4 space-y-4 overflow-auto">
-        <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Filters</h2>
+        <div>
+          <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Filters</h2>
+          <p className="text-xs text-muted-foreground mt-1">EPA LMOP · live data</p>
+        </div>
 
         <div>
           <label className="text-xs text-muted-foreground">State</label>
           <Select value={stateFilter} onValueChange={setStateFilter}>
-            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="mt-1">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All States</SelectItem>
-              {states.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              {states.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -50,7 +83,9 @@ export default function LandfillMap() {
         <div>
           <label className="text-xs text-muted-foreground">Ownership</label>
           <Select value={ownershipFilter} onValueChange={setOwnershipFilter}>
-            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="mt-1">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
               <SelectItem value="Municipal">Municipal</SelectItem>
@@ -60,11 +95,14 @@ export default function LandfillMap() {
         </div>
 
         <div>
-          <label className="text-xs text-muted-foreground">Acceptance</label>
+          <label className="text-xs text-muted-foreground">PV Acceptance</label>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="mt-1">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
+              <SelectItem value="Unknown">Unknown</SelectItem>
               <SelectItem value="Yes">Accepts</SelectItem>
               <SelectItem value="No">Rejects</SelectItem>
               <SelectItem value="Conditional">Conditional</SelectItem>
@@ -72,32 +110,47 @@ export default function LandfillMap() {
           </Select>
         </div>
 
-        <div>
-          <label className="text-xs text-muted-foreground">Cost Range ($/ton)</label>
-          <Slider
-            min={0}
-            max={150}
-            step={5}
-            value={costRange}
-            onValueChange={setCostRange}
-            className="mt-3"
-          />
-          <div className="flex justify-between text-xs text-muted-foreground mt-1">
-            <span>${costRange[0]}</span>
-            <span>${costRange[1]}</span>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <div className="space-y-0.5">
+            <Label htmlFor="solar-layer" className="text-xs text-muted-foreground">
+              Solar facilities
+            </Label>
+            <p className="text-[10px] text-muted-foreground">USPVDB · select a state</p>
           </div>
+          <Switch
+            id="solar-layer"
+            checked={showSolar}
+            onCheckedChange={setShowSolar}
+            disabled={stateFilter === "all"}
+          />
         </div>
+        {showSolar && stateFilter !== "all" && (
+          <p className="text-xs text-muted-foreground">
+            {solarFacilities.length.toLocaleString()} utility-scale solar sites in {stateFilter}
+          </p>
+        )}
 
         <div className="pt-2 border-t border-border/50">
-          <p className="text-xs text-muted-foreground">{filtered.length} of {landfills.length} facilities shown</p>
+          <p className="text-xs text-muted-foreground">
+            {filtered.length.toLocaleString()} of {landfills.length.toLocaleString()} facilities shown
+          </p>
         </div>
 
-        {/* Legend */}
         <div className="pt-2 space-y-1">
           <p className="text-xs text-muted-foreground font-semibold">Legend</p>
-          <div className="flex items-center gap-2 text-xs"><span className="w-3 h-3 rounded-full bg-status-accept inline-block" /> Accepts</div>
-          <div className="flex items-center gap-2 text-xs"><span className="w-3 h-3 rounded-full bg-status-reject inline-block" /> Rejects</div>
-          <div className="flex items-center gap-2 text-xs"><span className="w-3 h-3 rounded-full bg-status-conditional inline-block" /> Conditional</div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-3 h-3 rounded-full inline-block" style={{ background: statusColor("Yes") }} /> Landfill
+            (accepts)
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-3 h-3 rounded-full inline-block" style={{ background: statusColor("Unknown") }} />{" "}
+            Landfill (unknown PV policy)
+          </div>
+          {showSolar && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> Solar facility (USPVDB)
+            </div>
+          )}
         </div>
 
         {selectedLandfill && (
@@ -108,24 +161,37 @@ export default function LandfillMap() {
         )}
       </div>
 
-      {/* Map */}
       <div className="flex-1">
-        <MapContainer
-          center={[39.5, -98.35]}
-          zoom={5}
-          className="w-full h-full"
-          attributionControl={false}
-        >
+        <MapContainer center={[39.5, -98.35]} zoom={5} className="w-full h-full" attributionControl={false}>
           <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
           {filtered.map((lf) => (
             <CircleMarker
               key={lf.id}
               center={[lf.lat, lf.lng]}
-              radius={8}
-              pathOptions={{ color: statusColor(lf.acceptsPV), fillColor: statusColor(lf.acceptsPV), fillOpacity: 0.75, weight: 2 }}
+              radius={7}
+              pathOptions={{
+                color: statusColor(lf.acceptsPV),
+                fillColor: statusColor(lf.acceptsPV),
+                fillOpacity: 0.75,
+                weight: 2,
+              }}
               eventHandlers={{ click: () => setSelectedLandfillId(lf.id) }}
             />
           ))}
+          {showSolar &&
+            solarFacilities.map((sf) => (
+              <CircleMarker
+                key={`solar-${sf.id}`}
+                center={[sf.lat, sf.lng]}
+                radius={5}
+                pathOptions={{
+                  color: "#f59e0b",
+                  fillColor: "#f59e0b",
+                  fillOpacity: 0.85,
+                  weight: 1,
+                }}
+              />
+            ))}
         </MapContainer>
       </div>
     </div>
@@ -136,17 +202,26 @@ function LandfillPopup({ landfill: l }: { landfill: Landfill }) {
   return (
     <div className="space-y-2 min-w-[220px]">
       <h3 className="font-semibold text-sm">{l.name}</h3>
-      <div className="flex gap-2">
-        <Badge variant={l.acceptsPV === "Yes" ? "default" : l.acceptsPV === "No" ? "destructive" : "secondary"} className="text-xs">
-          {l.acceptsPV === "Yes" ? "Accepts PV" : l.acceptsPV === "No" ? "Rejects PV" : "Conditional"}
+      <div className="flex gap-2 flex-wrap">
+        <Badge
+          variant={l.acceptsPV === "Yes" ? "default" : l.acceptsPV === "No" ? "destructive" : "secondary"}
+          className="text-xs"
+        >
+          PV: {l.acceptsPV}
         </Badge>
-        <Badge variant="outline" className="text-xs">{l.ownership}</Badge>
+        <Badge variant="outline" className="text-xs">
+          {l.ownership}
+        </Badge>
+        {l.operationalStatus && (
+          <Badge variant="outline" className="text-xs">
+            {l.operationalStatus}
+          </Badge>
+        )}
       </div>
       <div className="text-xs space-y-1">
-        <p><span className="text-muted-foreground">Location:</span> {l.county}, {l.state}</p>
-        {l.tippingFee && <p><span className="text-muted-foreground">Tipping Fee:</span> ${l.tippingFee}/{l.tippingFeeUnit.replace("$/", "")}</p>}
-        {l.minLoad && <p><span className="text-muted-foreground">Min Load:</span> {l.minLoad} tons</p>}
-        <p><span className="text-muted-foreground">TCLP Required:</span> {l.tclpRequired ? "Yes" : "No"}</p>
+        <p>
+          <span className="text-muted-foreground">Location:</span> {l.county}, {l.state}
+        </p>
         <p className="italic text-muted-foreground">{l.notes}</p>
       </div>
     </div>

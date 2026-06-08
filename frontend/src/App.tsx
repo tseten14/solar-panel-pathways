@@ -12,7 +12,14 @@ import DataTable from "./pages/DataTable";
 import NotFound from "./pages/NotFound";
 import SolarMap from "./pages/SolarMap";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 2,
+      staleTime: 1000 * 60 * 30,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>

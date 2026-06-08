@@ -1,20 +1,4 @@
-export interface Landfill {
-  id: string;
-  name: string;
-  state: string;
-  county: string;
-  lat: number;
-  lng: number;
-  ownership: "Municipal" | "Private";
-  acceptsPV: "Yes" | "No" | "Conditional";
-  tippingFee: number | null;
-  tippingFeeUnit: "$/ton" | "$/panel";
-  minLoad: number | null;
-  tclpRequired: boolean;
-  notes: string;
-  lastSurveyed: string;
-  surveyorName: string;
-}
+export type { Landfill } from "@/types/landfill";
 
 export interface TradeRoute {
   id: string;
@@ -39,22 +23,6 @@ export interface MLPrediction {
   wasteDesert: boolean;
   confidence: [number, number];
 }
-
-export const landfills: Landfill[] = [
-  { id: "1", name: "Garden State Disposal", state: "NJ", county: "Essex", lat: 40.786, lng: -74.177, ownership: "Private", acceptsPV: "No", tippingFee: null, tippingFeeUnit: "$/ton", minLoad: null, tclpRequired: false, notes: "Strictly refuses PV waste. Cites TCLP concerns.", lastSurveyed: "2024-11-15", surveyorName: "M. Chen" },
-  { id: "2", name: "Sunshine Recycling Landfill", state: "CA", county: "Riverside", lat: 33.953, lng: -117.396, ownership: "Private", acceptsPV: "Yes", tippingFee: 85, tippingFeeUnit: "$/ton", minLoad: 2, tclpRequired: true, notes: "Accepts PV panels after TCLP testing. Dedicated cell for e-waste.", lastSurveyed: "2024-10-20", surveyorName: "J. Park" },
-  { id: "3", name: "Lone Star Waste Management", state: "TX", county: "Harris", lat: 29.76, lng: -95.37, ownership: "Municipal", acceptsPV: "Conditional", tippingFee: 72, tippingFeeUnit: "$/ton", minLoad: 5, tclpRequired: true, notes: "Accepts with pre-approval. Requires manifest documentation.", lastSurveyed: "2024-09-08", surveyorName: "R. Garcia" },
-  { id: "4", name: "Desert Sun Landfill", state: "AZ", county: "Maricopa", lat: 33.448, lng: -112.074, ownership: "Private", acceptsPV: "Yes", tippingFee: 60, tippingFeeUnit: "$/ton", minLoad: 1, tclpRequired: false, notes: "Actively markets PV acceptance. Low-cost option.", lastSurveyed: "2025-01-10", surveyorName: "A. Singh" },
-  { id: "5", name: "Everglades Solid Waste", state: "FL", county: "Miami-Dade", lat: 25.761, lng: -80.191, ownership: "Municipal", acceptsPV: "No", tippingFee: null, tippingFeeUnit: "$/ton", minLoad: null, tclpRequired: false, notes: "State regulation prohibits without special permit.", lastSurveyed: "2024-12-01", surveyorName: "L. Williams" },
-  { id: "6", name: "Rocky Mountain Disposal", state: "CO", county: "Denver", lat: 39.739, lng: -104.99, ownership: "Private", acceptsPV: "Yes", tippingFee: 78, tippingFeeUnit: "$/ton", minLoad: 3, tclpRequired: true, notes: "Part of solar recycling pilot program.", lastSurveyed: "2025-01-22", surveyorName: "K. Johnson" },
-  { id: "7", name: "Empire State Waste Authority", state: "NY", county: "Queens", lat: 40.713, lng: -73.935, ownership: "Municipal", acceptsPV: "No", tippingFee: null, tippingFeeUnit: "$/ton", minLoad: null, tclpRequired: false, notes: "NYC prohibits PV in municipal waste stream.", lastSurveyed: "2024-08-30", surveyorName: "D. Brown" },
-  { id: "8", name: "Peach State Landfill", state: "GA", county: "Fulton", lat: 33.749, lng: -84.388, ownership: "Private", acceptsPV: "Conditional", tippingFee: 65, tippingFeeUnit: "$/ton", minLoad: 2, tclpRequired: true, notes: "Case-by-case review. Prefers bulk commercial loads.", lastSurveyed: "2024-11-28", surveyorName: "S. Taylor" },
-  { id: "9", name: "Silver State Environmental", state: "NV", county: "Clark", lat: 36.169, lng: -115.14, ownership: "Private", acceptsPV: "Yes", tippingFee: 55, tippingFeeUnit: "$/ton", minLoad: 1, tclpRequired: false, notes: "Near major solar farms. High volume capacity.", lastSurveyed: "2025-02-05", surveyorName: "J. Park" },
-  { id: "10", name: "Bayou Waste Services", state: "LA", county: "East Baton Rouge", lat: 30.451, lng: -91.187, ownership: "Municipal", acceptsPV: "Conditional", tippingFee: 70, tippingFeeUnit: "$/ton", minLoad: 3, tclpRequired: true, notes: "Requires state DEQ notification prior to acceptance.", lastSurveyed: "2024-10-15", surveyorName: "M. Davis" },
-  { id: "11", name: "Cascade Disposal", state: "WA", county: "King", lat: 47.606, lng: -122.332, ownership: "Municipal", acceptsPV: "Yes", tippingFee: 92, tippingFeeUnit: "$/ton", minLoad: 2, tclpRequired: true, notes: "Progressive e-waste policy. High tipping fees.", lastSurveyed: "2025-01-18", surveyorName: "R. Garcia" },
-  { id: "12", name: "Prairie Wind Landfill", state: "KS", county: "Sedgwick", lat: 37.687, lng: -97.336, ownership: "Private", acceptsPV: "No", tippingFee: null, tippingFeeUnit: "$/ton", minLoad: null, tclpRequired: false, notes: "No infrastructure for PV waste handling.", lastSurveyed: "2024-07-22", surveyorName: "K. Johnson" },
-  { id: "13", name: "Blue Ridge Waste", state: "NC", county: "Mecklenburg", lat: 35.227, lng: -80.843, ownership: "Private", acceptsPV: "Yes", tippingFee: 68, tippingFeeUnit: "$/ton", minLoad: 2, tclpRequired: false, notes: "Partnered with regional solar decommissioner.", lastSurveyed: "2025-02-12", surveyorName: "A. Singh" },
-];
 
 export const tradeRoutes: TradeRoute[] = [
   { id: "tr1", origin: "NJ", originLat: 40.22, originLng: -74.76, destination: "PA (Recycler)", destLat: 40.27, destLng: -76.88, estimatedVolume: "~450 tons/yr", mode: "Truck", legalStatus: "Tracked", isInternational: false },
