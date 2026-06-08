@@ -1,0 +1,16 @@
+name,state,acceptsPV,tippingFee,tclpRequired,notes,lastSurveyed,surveyorName
+City of Clovis LF,CA,Yes,95.50,true,Accepts bifacial modules with intact frames; glass breakage fee may apply.,2025-03-14,M. Patel
+Allied Imperial Landfill,CA,Conditional,112.00,true,Conditional on TCLP pass; minimum load 5 tons.,2025-02-08,J. Nguyen
+Bakersfield Metropolitan SLF (BENA),CA,Yes,88.25,true,Routine PV loads accepted; contact gatehouse 24h ahead.,2025-04-22,R. Gomez
+Antelope Valley Recycling and Disposal Facility,CA,No,,false,Facility policy excludes PV modules; refer to LA County HHW program.,2024-11-30,A. Chen
+Angelina County Waste Management Center,TX,Yes,72.00,false,Accepts decommissioned residential panels; no broken glass loads.,2025-01-19,T. Williams
+New Boston Landfill,TX,Conditional,65.50,true,Conditional acceptance for utility-scale only with pre-approval.,2025-03-05,D. Brooks
+Royal Oaks Landfill,TX,Yes,78.00,true,Standard MSW tipping rates apply; TCLP required for all PV.,2025-02-27,K. Martinez
+Huachuca City Landfill,AZ,Yes,58.75,false,Small loads accepted without appointment; max 2 tons per trip.,2025-04-01,S. Reddy
+Cinder Lake MSW LF,AZ,Conditional,62.00,true,Seasonal restrictions May–Sep; TCLP and manifest required.,2025-03-18,L. Ortega
+Carson City Sanitary Landfill,NV,Yes,54.00,false,Accepts intact crystalline-silicon panels; no thin-film.,2025-04-10,P. Sullivan
+Boulder City LF,NV,Yes,49.50,false,Low-volume residential PV accepted at standard gate rate.,2025-01-30,N. Foster
+Broward County Landfill,FL,No,,false,County ordinance prohibits PV in MSW stream; use certified recycler.,2024-12-15,C. Johnson
+Citrus County Central Landfill,FL,Conditional,89.00,true,Utility-scale only with waste characterization report.,2025-02-14,E. Thompson
+NJMC 1-E Landfill,NJ,Unknown,105.00,true,Policy under review; call environmental compliance before delivery.,2025-03-28,H. Park
+Clint Landfill,TX,Yes,71.25,true,Cross-border loads require Texas manifest; TCLP mandatory.,2025-04-05,M. Alvarez

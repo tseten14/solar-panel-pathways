@@ -64,7 +64,19 @@ export function mapSolarFeature(feature: {
   };
 }
 
-export async function fetchSolarStatsByState(): Promise<SolarStateStats[]> {
+const USE_BACKEND_CACHE = import.meta.env.VITE_USE_BACKEND_CACHE === "true";
+
+function mapSolarStatsFeatures(features: { attributes: SolarStatsAttributes }[]): SolarStateStats[] {
+  return features
+    .map((f) => ({
+      state: f.attributes.p_state,
+      facilityCount: f.attributes.facility_count,
+      totalCapacityMw: Math.round(f.attributes.total_mw * 10) / 10,
+    }))
+    .sort((a, b) => b.totalCapacityMw - a.totalCapacityMw);
+}
+
+async function fetchSolarStatsFromArcGIS(): Promise<SolarStateStats[]> {
   const search = new URLSearchParams({
     where: "1=1",
     outStatistics: JSON.stringify([
@@ -83,13 +95,25 @@ export async function fetchSolarStatsByState(): Promise<SolarStateStats[]> {
   };
   if (data.error?.message) throw new Error(data.error.message);
 
-  return (data.features ?? [])
-    .map((f) => ({
-      state: f.attributes.p_state,
-      facilityCount: f.attributes.facility_count,
-      totalCapacityMw: Math.round(f.attributes.total_mw * 10) / 10,
-    }))
-    .sort((a, b) => b.totalCapacityMw - a.totalCapacityMw);
+  return mapSolarStatsFeatures(data.features ?? []);
+}
+
+async function fetchSolarStatsFromBackend(): Promise<SolarStateStats[]> {
+  const res = await fetch("/api/solar/stats");
+  if (!res.ok) throw new Error(`Backend solar stats request failed (${res.status})`);
+  const data = (await res.json()) as { features?: { attributes: SolarStatsAttributes }[] };
+  return mapSolarStatsFeatures(data.features ?? []);
+}
+
+export async function fetchSolarStatsByState(): Promise<SolarStateStats[]> {
+  if (USE_BACKEND_CACHE) {
+    try {
+      return await fetchSolarStatsFromBackend();
+    } catch {
+      // Fall back to direct ArcGIS when backend cache is unavailable.
+    }
+  }
+  return fetchSolarStatsFromArcGIS();
 }
 
 export async function fetchSolarFacilitiesByState(state: string): Promise<SolarFacility[]> {

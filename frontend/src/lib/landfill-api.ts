@@ -77,7 +77,9 @@ export function mapLmopFeature(feature: { attributes: LmopAttributes }): Landfil
   };
 }
 
-export async function fetchLandfills(): Promise<Landfill[]> {
+const USE_BACKEND_CACHE = import.meta.env.VITE_USE_BACKEND_CACHE === "true";
+
+async function fetchLandfillsFromArcGIS(): Promise<Landfill[]> {
   const features = await queryArcGISFeatures<LmopAttributes>(LMOP_URL, {
     where: "latitude IS NOT NULL AND longitude IS NOT NULL",
     outFields:
@@ -86,4 +88,23 @@ export async function fetchLandfills(): Promise<Landfill[]> {
   });
 
   return features.map(mapLmopFeature).filter((l): l is Landfill => l !== null);
+}
+
+async function fetchLandfillsFromBackend(): Promise<Landfill[]> {
+  const res = await fetch("/api/landfills");
+  if (!res.ok) throw new Error(`Backend landfills request failed (${res.status})`);
+  const data = (await res.json()) as { features?: { attributes: LmopAttributes }[] };
+  const features = data.features ?? [];
+  return features.map(mapLmopFeature).filter((l): l is Landfill => l !== null);
+}
+
+export async function fetchLandfills(): Promise<Landfill[]> {
+  if (USE_BACKEND_CACHE) {
+    try {
+      return await fetchLandfillsFromBackend();
+    } catch {
+      // Fall back to direct ArcGIS when backend cache is unavailable.
+    }
+  }
+  return fetchLandfillsFromArcGIS();
 }

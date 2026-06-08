@@ -1,5 +1,8 @@
-import { useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { MapPin, Eye, Upload, Building2, ScanSearch, Boxes, Sparkles } from "lucide-react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { Link } from "react-router-dom";
+import { MapPin, Eye, Upload, Building2, ScanSearch, Boxes, Sparkles, ExternalLink } from "lucide-react";
+import { useLandfills } from "@/hooks/useLandfills";
+import { findNearestLandfill } from "@/lib/geo";
 import { GeoAiMark } from "@/components/GeoAiMark";
 import MapPanel from "@/components/MapPanel";
 import type { MapPanelHandle } from "@/components/MapPanel";
@@ -34,6 +37,35 @@ const Index = () => {
   /** Seconds remaining for long-running work; 0 = show "OOPS!"; null = idle */
   const [scanCountdown, setScanCountdown] = useState<number | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { data: landfills = [], isLoading: landfillsLoading } = useLandfills();
+
+  const referenceCoords = useMemo(() => {
+    if (
+      selectedPin &&
+      Number.isFinite(selectedPin.lat) &&
+      Number.isFinite(selectedPin.lng)
+    ) {
+      return { lat: selectedPin.lat, lng: selectedPin.lng };
+    }
+    if (buildingMapMarkers.length > 0) {
+      const valid = buildingMapMarkers.filter(
+        (m) => Number.isFinite(m.lat) && Number.isFinite(m.lng),
+      );
+      if (valid.length === 0) return null;
+      return {
+        lat: valid.reduce((sum, m) => sum + m.lat, 0) / valid.length,
+        lng: valid.reduce((sum, m) => sum + m.lng, 0) / valid.length,
+      };
+    }
+    return null;
+  }, [selectedPin, buildingMapMarkers]);
+
+  const nearestDisposalSite = useMemo(() => {
+    if (!referenceCoords) return null;
+    return findNearestLandfill(referenceCoords.lat, referenceCoords.lng, landfills);
+  }, [referenceCoords, landfills]);
+
+  const showNearestDisposalCard = !!selectedPin || buildingMapMarkers.length > 0;
 
   useLayoutEffect(() => {
     if (!isProcessing) {
@@ -372,8 +404,8 @@ const Index = () => {
       <div className="relative z-20 flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {/* Left: Map */}
         <div className="min-w-0 w-1/2 shrink-0 overflow-hidden border-r border-border/70 bg-card/20">
-          <div className="h-full w-full p-3">
-            <div className="h-full w-full overflow-hidden rounded-xl border border-border/70 bg-card/40 shadow-[0_10px_30px_-18px_hsl(var(--primary)/0.22)]">
+          <div className="flex h-full w-full flex-col p-3 gap-3">
+            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border/70 bg-card/40 shadow-[0_10px_30px_-18px_hsl(var(--primary)/0.22)]">
               <MapPanel
                 ref={mapPanelRef}
                 onPinDrop={setSelectedPin}
@@ -381,6 +413,13 @@ const Index = () => {
                 buildingMarkers={buildingMapMarkers}
               />
             </div>
+            {showNearestDisposalCard && (
+              <NearestDisposalSiteCard
+                isLoading={landfillsLoading}
+                referenceCoords={referenceCoords}
+                nearest={nearestDisposalSite}
+              />
+            )}
           </div>
         </div>
 
@@ -587,6 +626,56 @@ function ProcessingCountdownPanel({ scanCountdown }: { scanCountdown: number | n
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function NearestDisposalSiteCard({
+  isLoading,
+  referenceCoords,
+  nearest,
+}: {
+  isLoading: boolean;
+  referenceCoords: { lat: number; lng: number } | null;
+  nearest: ReturnType<typeof findNearestLandfill>;
+}) {
+  return (
+    <div className="shrink-0 rounded-xl border border-border/70 bg-card/70 p-4 backdrop-blur-md shadow-[0_10px_30px_-18px_hsl(var(--primary)/0.22)]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Building2 className="h-4 w-4 shrink-0 text-primary" />
+          <h2 className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+            Nearest Disposal Site
+          </h2>
+        </div>
+        <Link
+          to="/map"
+          className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] text-primary transition-colors hover:text-primary/80"
+        >
+          View map
+          <ExternalLink className="h-3 w-3" />
+        </Link>
+      </div>
+
+      {isLoading ? (
+        <p className="mt-3 font-mono text-xs text-muted-foreground">Loading landfill data…</p>
+      ) : !referenceCoords ? (
+        <p className="mt-3 font-mono text-xs text-muted-foreground">
+          Drop a pin on the map or run a satellite scan to get coordinates for nearest-site lookup.
+        </p>
+      ) : !nearest ? (
+        <p className="mt-3 font-mono text-xs text-muted-foreground">
+          No open disposal sites found near{" "}
+          {referenceCoords.lat.toFixed(4)}, {referenceCoords.lng.toFixed(4)}.
+        </p>
+      ) : (
+        <div className="mt-3 space-y-1">
+          <p className="text-sm font-medium text-foreground">{nearest.landfill.name}</p>
+          <p className="font-mono text-xs text-muted-foreground">
+            {nearest.distanceMiles.toFixed(1)} mi away · {nearest.landfill.state}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

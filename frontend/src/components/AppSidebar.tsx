@@ -63,7 +63,8 @@ export function AppSidebar() {
         {!collapsed && (
           <div className="mt-auto px-4 py-4 border-t border-border/50">
             <p className="text-xs text-muted-foreground">NREL Research Tool</p>
-            <p className="text-xs text-muted-foreground">v1.0.0 — Mock Data</p>
+            <p className="text-xs text-muted-foreground">v1.1.0 — Live Data</p>
+            <p className="text-xs text-muted-foreground mt-1">EPA LMOP · USGS USPVDB</p>
           </div>
         )}
       </SidebarContent>

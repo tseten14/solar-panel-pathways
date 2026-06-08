@@ -22,7 +22,7 @@ The application is structured as a monorepo containing a modern web frontend. Th
   - `public/`: Static assets such as placeholder images and vector icons.
   - `index.html`: Main HTML entry point.
   - Config Files: `vite.config.ts`, `tailwind.config.ts`, `tsconfig.json`, `playwright.config.ts`.
-- `/backend`: A placeholder directory intended for future backend API integration (Node.js, Python, etc.).
+- `/backend`: FastAPI service for scene detection (SAM 3 / YOLO) and Street View imagery, with optional cached transit entrance data under `backend/data/`.
 
 ## Setup & Local Development
 1. Navigate into the frontend folder:

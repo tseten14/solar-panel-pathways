@@ -7,6 +7,7 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
+from data_cache import get_landfills, get_solar_stats, refresh_if_stale
 from sam3_service import run_detection, load_sam3
 from yolo_service import run_yolo_detection
 
@@ -33,6 +34,11 @@ async def startup():
     except Exception as e:
         logger.warning(f"SAM 3 preload skipped: {e}")
 
+    try:
+        await refresh_if_stale()
+    except Exception as e:
+        logger.warning(f"Data cache refresh skipped: {e}")
+
 
 app.add_middleware(
     # Allow the frontend (running on a different port) to call this API.
@@ -51,6 +57,28 @@ async def health():
 
     # This is intentionally lightweight and does not require the SAM 3 model.
     return {"status": "ok"}
+
+
+@app.get("/landfills")
+async def landfills():
+    try:
+        return get_landfills()
+    except FileNotFoundError:
+        raise HTTPException(503, "Landfills cache not available yet")
+    except Exception as e:
+        logger.exception("Failed to read landfills cache")
+        raise HTTPException(500, f"Failed to read landfills cache: {e}")
+
+
+@app.get("/solar/stats")
+async def solar_stats():
+    try:
+        return get_solar_stats()
+    except FileNotFoundError:
+        raise HTTPException(503, "Solar stats cache not available yet")
+    except Exception as e:
+        logger.exception("Failed to read solar stats cache")
+        raise HTTPException(500, f"Failed to read solar stats cache: {e}")
 
 
 _GMAPS_EMBED_KEY = "AIzaSyCmL18misQw9KdwqGaw3zHkitj8vG6QF2Y"

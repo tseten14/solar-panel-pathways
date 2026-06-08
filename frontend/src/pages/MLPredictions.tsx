@@ -1,16 +1,34 @@
-import { useState } from "react";
-import { mlPredictions } from "@/data/mockData";
+import { useMemo, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
 import { AlertTriangle, MapPin, DollarSign, TrendingUp } from "lucide-react";
+import { useLandfills } from "@/hooks/useLandfills";
+import { useSolarStatsByState } from "@/hooks/useSolarData";
+import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
+import { computeStateCoverage } from "@/lib/state-coverage";
 
 export default function MLPredictions() {
-  const [selectedState, setSelectedState] = useState("CA");
-  const prediction = mlPredictions.find((p) => p.state === selectedState);
+  const { data: landfills = [], isLoading: landfillsLoading, isError: landfillsError, refetch } = useLandfills();
+  const { data: solarStats = [], isLoading: solarLoading, isError: solarError } = useSolarStatsByState();
 
-  const costData = mlPredictions.map((p) => ({ state: p.state, cost: p.avgCost, acceptance: p.acceptanceProbability }));
-  const wasteDeserts = mlPredictions.filter((p) => p.wasteDesert);
+  const coverage = useMemo(
+    () => computeStateCoverage(landfills, solarStats),
+    [landfills, solarStats],
+  );
+
+  const [selectedState, setSelectedState] = useState("CA");
+  const effectiveState = coverage.some((c) => c.state === selectedState)
+    ? selectedState
+    : coverage[0]?.state ?? "CA";
+  const prediction = coverage.find((p) => p.state === effectiveState);
+
+  const costData = coverage.map((p) => ({
+    state: p.state,
+    cost: p.avgCost,
+    acceptance: p.acceptanceProbability,
+  }));
+  const wasteDeserts = coverage.filter((p) => p.wasteDesert);
 
   const confidenceData = prediction
     ? Array.from({ length: 20 }, (_, i) => {
@@ -22,19 +40,41 @@ export default function MLPredictions() {
       })
     : [];
 
+  const isLoading = landfillsLoading || solarLoading;
+  const isError = landfillsError || solarError;
+
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <DataLoadingState message="Loading EPA landfill and USGS solar data…" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <DataErrorState
+          message="Could not load live data from EPA LMOP or USGS USPVDB. Check your network connection and try again."
+          onRetry={() => refetch()}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">ML Predictions</h1>
-          <p className="text-sm text-muted-foreground mt-1">Acceptance probability & cost estimates</p>
+          <p className="text-sm text-muted-foreground mt-1">Derived from EPA LMOP + USGS USPVDB</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Predict for:</span>
-          <Select value={selectedState} onValueChange={setSelectedState}>
+          <Select value={effectiveState} onValueChange={setSelectedState}>
             <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {mlPredictions.map((p) => <SelectItem key={p.state} value={p.state}>{p.state}</SelectItem>)}
+              {coverage.map((p) => <SelectItem key={p.state} value={p.state}>{p.state}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -98,7 +138,7 @@ export default function MLPredictions() {
         </div>
 
         <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-4">Confidence Distribution — {selectedState}</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-4">Confidence Distribution — {effectiveState}</h3>
           <ResponsiveContainer width="100%" height={280}>
             <AreaChart data={confidenceData}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 20%)" />
@@ -118,12 +158,16 @@ export default function MLPredictions() {
           Waste Desert States
         </h3>
         <div className="flex flex-wrap gap-2">
-          {wasteDeserts.map((p) => (
-            <div key={p.state} className="px-3 py-2 rounded-lg border border-destructive/30 bg-destructive/10">
-              <p className="text-sm font-medium text-foreground">{p.state}</p>
-              <p className="text-xs text-muted-foreground">{p.acceptanceProbability}% — {p.nearestDistance}mi to nearest</p>
-            </div>
-          ))}
+          {wasteDeserts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No waste desert states detected in current data.</p>
+          ) : (
+            wasteDeserts.map((p) => (
+              <div key={p.state} className="px-3 py-2 rounded-lg border border-destructive/30 bg-destructive/10">
+                <p className="text-sm font-medium text-foreground">{p.state}</p>
+                <p className="text-xs text-muted-foreground">{p.acceptanceProbability}% — {p.nearestDistance}mi to nearest</p>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

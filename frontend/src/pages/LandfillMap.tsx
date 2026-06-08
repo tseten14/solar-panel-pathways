@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import type { Landfill } from "@/types/landfill";
+import { ClusteredMarkers } from "@/components/ClusteredMarkers";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -8,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarFacilitiesByState } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
+import { DataSourceBadge } from "@/components/DataSourceBadge";
 import "leaflet/dist/leaflet.css";
 
 const statusColor = (s: string) => {
@@ -45,6 +47,18 @@ export default function LandfillMap() {
   const selectedLandfill =
     filtered.find((l) => l.id === selectedLandfillId) ?? filtered[0] ?? null;
 
+  const clusterMarkers = useMemo(
+    () =>
+      filtered.map((lf) => ({
+        id: lf.id,
+        lat: lf.lat,
+        lng: lf.lng,
+        color: statusColor(lf.acceptsPV),
+        onClick: () => setSelectedLandfillId(lf.id),
+      })),
+    [filtered],
+  );
+
   if (isLoading) {
     return <DataLoadingState message="Loading landfill map data from EPA LMOP…" />;
   }
@@ -60,6 +74,7 @@ export default function LandfillMap() {
       <div className="w-64 shrink-0 border-r border-border/50 bg-card/30 p-4 space-y-4 overflow-auto">
         <div>
           <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Filters</h2>
+          <DataSourceBadge className="mt-2" />
           <p className="text-xs text-muted-foreground mt-1">EPA LMOP · live data</p>
         </div>
 
@@ -164,20 +179,7 @@ export default function LandfillMap() {
       <div className="flex-1">
         <MapContainer center={[39.5, -98.35]} zoom={5} className="w-full h-full" attributionControl={false}>
           <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
-          {filtered.map((lf) => (
-            <CircleMarker
-              key={lf.id}
-              center={[lf.lat, lf.lng]}
-              radius={7}
-              pathOptions={{
-                color: statusColor(lf.acceptsPV),
-                fillColor: statusColor(lf.acceptsPV),
-                fillOpacity: 0.75,
-                weight: 2,
-              }}
-              eventHandlers={{ click: () => setSelectedLandfillId(lf.id) }}
-            />
-          ))}
+          <ClusteredMarkers markers={clusterMarkers} />
           {showSolar &&
             solarFacilities.map((sf) => (
               <CircleMarker

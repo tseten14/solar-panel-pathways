@@ -12,5 +12,8 @@ node_modules/
 npm-cache/
 dist/
 
+# Backend API cache (refreshed from EPA/USGS)
+backend/data/cache/*.json
+
 # OS
 .DS_Store

@@ -1,5 +1,7 @@
-import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
+import { useMemo } from "react";
+import { MapContainer, TileLayer } from "react-leaflet";
 import type { Landfill } from "@/types/landfill";
+import { ClusteredMarkers } from "@/components/ClusteredMarkers";
 import "leaflet/dist/leaflet.css";
 
 const statusColor = (status: string) => {
@@ -14,6 +16,20 @@ interface MiniMapProps {
 }
 
 export function MiniMap({ landfills }: MiniMapProps) {
+  const clusterMarkers = useMemo(
+    () =>
+      landfills.map((lf) => ({
+        id: lf.id,
+        lat: lf.lat,
+        lng: lf.lng,
+        color: statusColor(lf.acceptsPV),
+        radius: 4,
+        fillOpacity: 0.6,
+        weight: 1,
+      })),
+    [landfills],
+  );
+
   return (
     <MapContainer
       center={[39.5, -98.35]}
@@ -26,19 +42,7 @@ export function MiniMap({ landfills }: MiniMapProps) {
       doubleClickZoom={false}
     >
       <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
-      {landfills.map((lf) => (
-        <CircleMarker
-          key={lf.id}
-          center={[lf.lat, lf.lng]}
-          radius={4}
-          pathOptions={{
-            color: statusColor(lf.acceptsPV),
-            fillColor: statusColor(lf.acceptsPV),
-            fillOpacity: 0.6,
-            weight: 1,
-          }}
-        />
-      ))}
+      <ClusteredMarkers markers={clusterMarkers} radius={4} fillOpacity={0.6} weight={1} />
     </MapContainer>
   );
 }
