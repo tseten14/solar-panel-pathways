@@ -1,12 +1,13 @@
+import { useMemo } from "react";
 import { Building2, MapPin, Sun, ArrowRightLeft } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { MiniMap } from "@/components/MiniMap";
-import { tradeRoutes } from "@/data/mockData";
 import { useNavigate } from "react-router-dom";
 import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarStatsByState } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import { Badge } from "@/components/ui/badge";
+import { computeModelledTradeRoutes } from "@/lib/trade-flows";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -20,6 +21,10 @@ export default function Dashboard() {
   const openCount = landfills.filter((l) => l.operationalStatus === "Open").length;
   const totalSolarMw = Math.round(solarStats.reduce((s, r) => s + r.totalCapacityMw, 0));
   const totalSolarFacilities = solarStats.reduce((s, r) => s + r.facilityCount, 0);
+  const modelledRoutes = useMemo(
+    () => computeModelledTradeRoutes(landfills, solarStats),
+    [landfills, solarStats],
+  );
 
   const filters = [
     { label: "Landfill Map", onClick: () => navigate("/map") },
@@ -81,9 +86,9 @@ export default function Dashboard() {
         />
         <StatCard
           icon={ArrowRightLeft}
-          label="Trade Routes Mapped"
-          value={tradeRoutes.length}
-          subtitle={`${tradeRoutes.filter((r) => r.isInternational).length} international (demo)`}
+          label="Modelled Flows"
+          value={modelledRoutes.length}
+          subtitle="Interstate routes · estimated"
         />
       </div>
 
