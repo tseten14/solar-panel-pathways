@@ -146,3 +146,22 @@ def get_solar_stats() -> dict:
     if not SOLAR_STATS_CACHE.exists():
         raise FileNotFoundError("Solar stats cache not available")
     return _read_cache(SOLAR_STATS_CACHE)
+
+
+def cache_status() -> dict:
+    landfills_ok = LANDFILLS_CACHE.exists()
+    solar_ok = SOLAR_STATS_CACHE.exists()
+    landfills_at = None
+    solar_at = None
+    if landfills_ok:
+        payload = _read_cache(LANDFILLS_CACHE)
+        landfills_at = payload.get("fetched_at")
+    if solar_ok:
+        payload = _read_cache(SOLAR_STATS_CACHE)
+        solar_at = payload.get("fetched_at")
+    return {
+        "cache_landfills": landfills_ok,
+        "cache_solar": solar_ok,
+        "landfills_fetched_at": landfills_at,
+        "solar_fetched_at": solar_at,
+    }

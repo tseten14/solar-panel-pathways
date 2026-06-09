@@ -7,6 +7,7 @@ import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarStatsByState } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import { Badge } from "@/components/ui/badge";
+import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
 import { computeModelledTradeRoutes } from "@/lib/trade-flows";
 
 export default function Dashboard() {
@@ -58,9 +59,10 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-1">PV Waste Flow Intelligence Overview</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
           <Badge variant="outline" className="text-xs">EPA LMOP</Badge>
           <Badge variant="outline" className="text-xs">USGS USPVDB</Badge>
+          <DataFreshnessBadge />
         </div>
       </div>
 

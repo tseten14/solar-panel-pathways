@@ -7,6 +7,7 @@ import { Download, Search, ChevronUp, ChevronDown } from "lucide-react";
 import { useLandfills } from "@/hooks/useLandfills";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
+import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
 import type { Landfill } from "@/types/landfill";
 
 type SortKey = "name" | "state" | "ownership" | "acceptsPV" | "operationalStatus";
@@ -110,7 +111,10 @@ export default function DataTable() {
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Data Table</h1>
-          <DataSourceBadge className="mt-2" />
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <DataSourceBadge />
+            <DataFreshnessBadge />
+          </div>
           <p className="text-sm text-muted-foreground mt-1">
             {landfills.length.toLocaleString()} MSW landfills from EPA LMOP
           </p>

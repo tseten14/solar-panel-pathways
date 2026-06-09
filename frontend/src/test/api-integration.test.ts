@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { fetchLandfills } from "@/lib/landfill-api";
 import { fetchSolarStatsByState, fetchSolarFacilitiesByState } from "@/lib/solar-api";
 
-describe("live API integration", () => {
+const runLive = process.env.RUN_LIVE_API_TESTS === "1";
+
+describe.skipIf(!runLive)("live API integration", () => {
   it(
     "fetches EPA LMOP landfills",
     async () => {

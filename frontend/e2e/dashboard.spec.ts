@@ -1,19 +1,12 @@
 import { test, expect } from "@playwright/test";
+import { mockArcGISApis } from "./fixtures";
 
-const LOAD_TIMEOUT = 90_000;
+test.beforeEach(async ({ page }) => {
+  await mockArcGISApis(page);
+});
 
-test("dashboard loads and shows MSW Landfills stat or EPA badge", async ({ page }) => {
+test("dashboard loads and shows MSW Landfills stat", async ({ page }) => {
   await page.goto("/");
-
-  await Promise.race([
-    page.waitForSelector("text=MSW Landfills", { timeout: LOAD_TIMEOUT }),
-    page.waitForSelector("text=EPA LMOP", { timeout: LOAD_TIMEOUT }),
-    page.waitForSelector("text=Loading", { timeout: LOAD_TIMEOUT }),
-  ]);
-
-  const hasMswLandfills = await page.getByText("MSW Landfills").isVisible();
-  const hasEpaBadge = await page.getByText("EPA LMOP").first().isVisible();
-  const hasLoading = await page.getByText(/Loading/i).first().isVisible();
-
-  expect(hasMswLandfills || hasEpaBadge || hasLoading).toBe(true);
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(page.getByText("MSW Landfills")).toBeVisible({ timeout: 30_000 });
 });

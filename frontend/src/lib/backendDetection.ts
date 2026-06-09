@@ -2,40 +2,55 @@ import type { DetectionEngineId, DetectionResult } from "@/types/detection";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
 
-// Detection can take a while because SAM 3 is heavy and depends on model download,
-// input image size, and available hardware acceleration.
-// We set a generous timeout so the UI can surface a readable error instead of
-// failing immediately for long-running scans.
-const DETECTION_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes
+const DETECTION_TIMEOUT_MS = 8 * 60 * 1000;
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+async function postDetect(
+  imageFile: File,
+  mode: "streetview" | "satellite",
+  engine: DetectionEngineId,
+  signal: AbortSignal,
+): Promise<DetectionResult> {
+  const formData = new FormData();
+  formData.append("file", imageFile);
+
+  const response = await fetch(`${API_BASE}/detect?mode=${mode}&engine=${engine}`, {
+    method: "POST",
+    body: formData,
+    signal,
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(err || `Detection failed: ${response.status}`);
+  }
+
+  return (await response.json()) as DetectionResult;
+}
 
 export async function runBackendDetection(
   imageFile: File,
   mode: "streetview" | "satellite" = "streetview",
   engine: DetectionEngineId = "sam3",
 ): Promise<DetectionResult> {
-  // The backend expects a multipart/form-data upload with the image bytes.
-  const formData = new FormData();
-  formData.append("file", imageFile);
+  if (imageFile.size > MAX_UPLOAD_BYTES) {
+    throw new Error(
+      `Image is too large (${(imageFile.size / (1024 * 1024)).toFixed(1)} MB). Maximum is ${MAX_UPLOAD_BYTES / (1024 * 1024)} MB.`,
+    );
+  }
 
-  // Use an AbortController so we can stop the request if it runs longer than the timeout.
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), DETECTION_TIMEOUT_MS);
 
-  // POST /detect?mode=streetview|satellite&engine=sam3|yolo
-  const response = await fetch(`${API_BASE}/detect?mode=${mode}&engine=${engine}`, {
-    method: "POST",
-    body: formData,
-    signal: controller.signal,
-  });
-  clearTimeout(timeoutId);
-
-  if (!response.ok) {
-    // Surface server errors (including validation errors) as a human-readable string.
-    const err = await response.text();
-    throw new Error(err || `Detection failed: ${response.status}`);
+  try {
+    try {
+      return await postDetect(imageFile, mode, engine, controller.signal);
+    } catch (firstErr) {
+      if (controller.signal.aborted) throw firstErr;
+      await new Promise((r) => setTimeout(r, 1500));
+      return await postDetect(imageFile, mode, engine, controller.signal);
+    }
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  // The server returns a DetectionResult JSON payload that the UI renders as polygons.
-  const result = (await response.json()) as DetectionResult;
-  return result;
 }

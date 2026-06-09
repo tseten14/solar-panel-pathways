@@ -8,6 +8,7 @@ import MapPanel from "@/components/MapPanel";
 import type { MapPanelHandle } from "@/components/MapPanel";
 import DetectionOverlay from "@/components/DetectionOverlay";
 import { runBackendDetection } from "@/lib/backendDetection";
+import { fetchBackendHealth, type BackendHealth } from "@/lib/apiHealth";
 import { runMockDetection } from "@/lib/mockDetection";
 import type { MapPin as MapPinType, DetectionResult, DetectionEngineId } from "@/types/detection";
 import type { MapScanBounds } from "@/lib/satelliteScanMarkers";
@@ -38,6 +39,11 @@ const Index = () => {
   const [scanCountdown, setScanCountdown] = useState<number | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { data: landfills = [], isLoading: landfillsLoading } = useLandfills();
+  const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
+
+  const sam3Available = backendHealth?.sam3_loaded ?? false;
+  const yoloAvailable = backendHealth?.yolo_available ?? false;
+  const streetviewAvailable = backendHealth?.streetview_configured ?? false;
 
   const referenceCoords = useMemo(() => {
     if (
@@ -133,7 +139,11 @@ const Index = () => {
       }
       if (result) {
         setDetectionResult(result);
-        if (!result.mock) setStatusMessage("");
+        if (result.mock) {
+          setStatusMessage("Mock preview — connect backend with SAM 3 (HF_TOKEN) for real detections.");
+        } else {
+          setStatusMessage("");
+        }
         if (activeMode === "satellite" && scanMapBounds) {
           const merged = mergeSatelliteDetectionsOnePerBuilding(
             result.detections,
@@ -279,6 +289,18 @@ const Index = () => {
     return () => document.removeEventListener("paste", handlePaste);
   }, [handlePaste]);
 
+  useEffect(() => {
+    fetchBackendHealth().then((health) => {
+      setBackendHealth(health);
+      if (!health) return;
+      if (detectionEngine === "sam3" && !health.sam3_loaded && health.yolo_available) {
+        setDetectionEngine("yolo");
+      } else if (detectionEngine === "yolo" && !health.yolo_available && health.sam3_loaded) {
+        setDetectionEngine("sam3");
+      }
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
 
   const handleScanMap = useCallback(async () => {
@@ -400,6 +422,13 @@ const Index = () => {
         </div>
       </header>
 
+      <BackendStatusBanner
+        health={backendHealth}
+        sam3Available={sam3Available}
+        yoloAvailable={yoloAvailable}
+        streetviewAvailable={streetviewAvailable}
+      />
+
       {/* Split panes */}
       <div className="relative z-20 flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {/* Left: Map */}
@@ -455,13 +484,17 @@ const Index = () => {
               <button
                 type="button"
                 onClick={() => setDetectionEngine("sam3")}
-                disabled={isProcessing}
-                title="Meta SAM 3 — promptable segmentation (mask polygons)"
+                disabled={isProcessing || (backendHealth !== null && !sam3Available)}
+                title={
+                  sam3Available
+                    ? "Meta SAM 3 — promptable segmentation (mask polygons)"
+                    : "SAM 3 unavailable — set HF_TOKEN and restart backend"
+                }
                 className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 font-mono text-[10px] tracking-wide transition-colors ${
                   detectionEngine === "sam3"
                     ? "bg-violet-500/20 text-violet-200"
                     : "text-muted-foreground hover:bg-violet-500/10 hover:text-violet-200/90"
-                } ${isProcessing ? "opacity-50 pointer-events-none" : ""}`}
+                } ${isProcessing || (backendHealth !== null && !sam3Available) ? "opacity-50 pointer-events-none" : ""}`}
               >
                 <Sparkles className="h-3 w-3 shrink-0" />
                 SAM 3
@@ -469,17 +502,19 @@ const Index = () => {
               <button
                 type="button"
                 onClick={() => setDetectionEngine("yolo")}
-                disabled={isProcessing}
+                disabled={isProcessing || (backendHealth !== null && !yoloAvailable)}
                 title={
-                  detectionMode === "streetview"
-                    ? "YOLO-World (local weights) or YOLOv8 COCO — bounding boxes"
-                    : "YOLO — YOLO-World for building prompts when world weights exist; else COCO (coarse)"
+                  yoloAvailable
+                    ? detectionMode === "streetview"
+                      ? "YOLO-World (local weights) or YOLOv8 COCO — bounding boxes"
+                      : "YOLO — YOLO-World for building prompts when world weights exist; else COCO (coarse)"
+                    : "YOLO unavailable — add yolov8*.pt weights to backend/models"
                 }
                 className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap border-l border-border/70 px-2.5 py-1.5 font-mono text-[10px] tracking-wide transition-colors ${
                   detectionEngine === "yolo"
                     ? "bg-amber-500/15 text-amber-200"
                     : "text-muted-foreground hover:bg-amber-500/10 hover:text-amber-200/90"
-                } ${isProcessing ? "opacity-50 pointer-events-none" : ""}`}
+                } ${isProcessing || (backendHealth !== null && !yoloAvailable) ? "opacity-50 pointer-events-none" : ""}`}
               >
                 <Boxes className="h-3 w-3 shrink-0" />
                 YOLO
@@ -603,6 +638,39 @@ const Index = () => {
 };
 
 /** Same centered panel + giant type as pre-refactor processing UI (no dimmed image / gray scrim). */
+function BackendStatusBanner({
+  health,
+  sam3Available,
+  yoloAvailable,
+  streetviewAvailable,
+}: {
+  health: BackendHealth | null;
+  sam3Available: boolean;
+  yoloAvailable: boolean;
+  streetviewAvailable: boolean;
+}) {
+  if (health === null) {
+    return (
+      <div className="relative z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-[11px] text-amber-100">
+        Backend offline — detection will use mock preview where available. Start API on port 8000.
+      </div>
+    );
+  }
+
+  const issues: string[] = [];
+  if (!sam3Available) issues.push("SAM 3 (set HF_TOKEN)");
+  if (!yoloAvailable) issues.push("YOLO (add .pt weights)");
+  if (!streetviewAvailable) issues.push("Street View (set GOOGLE_MAPS_API_KEY)");
+
+  if (issues.length === 0) return null;
+
+  return (
+    <div className="relative z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-[11px] text-amber-100">
+      Partial backend setup: {issues.join(" · ")}
+    </div>
+  );
+}
+
 function ProcessingCountdownPanel({ scanCountdown }: { scanCountdown: number | null }) {
   return (
     <div

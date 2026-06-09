@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
-import { AlertTriangle, MapPin, DollarSign, TrendingUp } from "lucide-react";
+import { AlertTriangle, MapPin, DollarSign, TrendingUp, Info } from "lucide-react";
+import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarStatsByState } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
@@ -66,11 +68,25 @@ export default function MLPredictions() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">ML Predictions</h1>
-          <p className="text-sm text-muted-foreground mt-1">Derived from EPA LMOP + USGS USPVDB</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold text-foreground">State Coverage Analysis</h1>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" className="text-muted-foreground hover:text-foreground" aria-label="Methodology">
+                  <Info className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-sm">
+                Heuristic estimates from EPA LMOP landfill locations, USGS USPVDB solar capacity, and
+                local PV survey enrichment — not a trained machine-learning model.
+              </TooltipContent>
+            </Tooltip>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">Policy and disposal estimates · EPA LMOP + USGS USPVDB</p>
+          <DataFreshnessBadge />
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Predict for:</span>
+          <span className="text-sm text-muted-foreground">Analyze state:</span>
           <Select value={effectiveState} onValueChange={setSelectedState}>
             <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
             <SelectContent>

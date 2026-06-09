@@ -69,6 +69,10 @@ def _get_device() -> str:
     return "cpu"
 
 
+def is_sam3_loaded() -> bool:
+    return _model is not None
+
+
 def load_sam3() -> bool:
     # Load SAM 3 model and processor. Returns True on success.
     global _model, _processor, _device, _dtype

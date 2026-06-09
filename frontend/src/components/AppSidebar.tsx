@@ -16,7 +16,7 @@ const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Landfill Map", url: "/map", icon: Map },
   { title: "Trade Flows", url: "/trade-flows", icon: ArrowRightLeft },
-  { title: "ML Predictions", url: "/predictions", icon: Brain },
+  { title: "Coverage Analysis", url: "/predictions", icon: Brain },
   { title: "Data Table", url: "/data", icon: Database },
   { title: "Solar Detections", url: "/solar-map", icon: ScanSearch },
 ];

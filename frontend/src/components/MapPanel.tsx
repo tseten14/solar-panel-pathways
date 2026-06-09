@@ -349,7 +349,7 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({
     : null;
 
   return (
-    <div ref={rootRef} className="relative h-full w-full">
+    <div ref={rootRef} className="relative h-full w-full" role="region" aria-label="Interactive map panel">
       {/* Soft vignette + highlight (visual only) */}
       <div className="pointer-events-none absolute inset-0 z-[5] bg-[radial-gradient(900px_circle_at_18%_12%,hsl(var(--primary)/0.10),transparent_40%),radial-gradient(700px_circle_at_90%_18%,hsl(40_90%_55%/0.06),transparent_45%)]" />
       {/* Header bar */}
@@ -369,6 +369,8 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({
               <button
                 type="button"
                 onClick={() => setActiveView("map")}
+                aria-label="Map view"
+                aria-pressed={activeView === "map"}
                 className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-[10px] tracking-wide transition-colors ${
                   activeView === "map"
                     ? "bg-primary/20 text-primary"
@@ -381,6 +383,8 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({
               <button
                 type="button"
                 onClick={() => setActiveView("satellite")}
+                aria-label="Satellite view"
+                aria-pressed={activeView === "satellite"}
                 className={`flex items-center gap-1.5 border-l border-border/70 px-3 py-1.5 font-mono text-[10px] tracking-wide transition-colors ${
                   activeView === "satellite"
                     ? "bg-primary/20 text-primary"
@@ -394,6 +398,8 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({
                 <button
                   type="button"
                   onClick={() => setActiveView("streetview")}
+                  aria-label="Street view"
+                  aria-pressed={activeView === "streetview"}
                   className={`flex items-center gap-1.5 border-l border-border/70 px-3 py-1.5 font-mono text-[10px] tracking-wide transition-colors ${
                     activeView === "streetview"
                       ? "bg-primary/20 text-primary"
@@ -462,6 +468,9 @@ const MapPanel = forwardRef<MapPanelHandle, MapPanelProps>(({
       <div
         ref={mapRef}
         className="h-full w-full"
+        role="application"
+        aria-label="Leaflet map for pin placement and satellite capture"
+        tabIndex={0}
         style={{ display: activeView === "streetview" && selectedPin ? "none" : "block" }}
       />
 

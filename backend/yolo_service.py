@@ -285,6 +285,10 @@ def _weight_candidates() -> list[tuple[Path, YoloVariant]]:
     return out
 
 
+def is_yolo_loaded() -> bool:
+    return _yolo_model is not None
+
+
 def load_yolo() -> bool:
     """Load YOLO-World or YOLOv8 once from local checkpoints. Returns True on success."""
     global _yolo_model, _loaded_weights, _yolo_variant

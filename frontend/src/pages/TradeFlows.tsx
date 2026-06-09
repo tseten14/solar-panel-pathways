@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import { MapContainer, TileLayer, Polyline, CircleMarker } from "react-leaflet";
 import { Badge } from "@/components/ui/badge";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
+import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarStatsByState } from "@/hooks/useSolarData";
@@ -99,7 +100,10 @@ export default function TradeFlows() {
           <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground">
             Modelled Interstate Flows
           </h2>
-          <DataSourceBadge />
+          <div className="flex flex-wrap items-center gap-2">
+            <DataSourceBadge />
+            <DataFreshnessBadge />
+          </div>
           <p className="text-xs text-muted-foreground flex items-start gap-1.5">
             <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
             Routes are estimated from solar capacity and landfill coverage — not observed trade data.

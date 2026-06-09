@@ -1,3 +1,10 @@
-# Solar Panel Pathways
+# SolarTrace Frontend
 
-A Vite + React application analyzing end-of-life photovoltaic solar panel waste flows.
+See the [root README](../README.md) for setup, environment variables, testing, and deployment.
+
+```bash
+npm install
+npm run dev      # http://localhost:8080
+npm run test     # Vitest
+npm run test:e2e # Playwright
+```

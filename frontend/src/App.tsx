@@ -4,6 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Dashboard from "./pages/Dashboard";
 import LandfillMap from "./pages/LandfillMap";
 import TradeFlows from "./pages/TradeFlows";
@@ -28,15 +29,17 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AppLayout>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/map" element={<LandfillMap />} />
-            <Route path="/trade-flows" element={<TradeFlows />} />
-            <Route path="/predictions" element={<MLPredictions />} />
-            <Route path="/data" element={<DataTable />} />
-            <Route path="/solar-map" element={<SolarMap />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/map" element={<LandfillMap />} />
+              <Route path="/trade-flows" element={<TradeFlows />} />
+              <Route path="/predictions" element={<MLPredictions />} />
+              <Route path="/data" element={<DataTable />} />
+              <Route path="/solar-map" element={<SolarMap />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </ErrorBoundary>
         </AppLayout>
       </BrowserRouter>
     </TooltipProvider>

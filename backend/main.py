@@ -1,15 +1,23 @@
 # FastAPI backend for scene detection: SAM 3 and YOLO (World + COCO fallback; compare via ?engine=sam3|yolo).
 # Exposes /detect for uploaded images and /streetview for fetching street view imagery.
 import logging
-import httpx
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+import httpx
+from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
-from data_cache import get_landfills, get_solar_stats, refresh_if_stale
-from sam3_service import run_detection, load_sam3
-from yolo_service import run_yolo_detection
+from config import cache_refresh_secret, cors_origins, google_maps_api_key, max_upload_bytes
+from data_cache import (
+    cache_status,
+    get_landfills,
+    get_solar_stats,
+    refresh_if_stale,
+    refresh_landfills,
+    refresh_solar_stats,
+)
+from sam3_service import is_sam3_loaded, load_sam3, run_detection
+from yolo_service import is_yolo_loaded, load_yolo, run_yolo_detection
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -22,17 +30,15 @@ app = FastAPI(
 
 @app.on_event("startup")
 async def startup():
-    # FastAPI startup hook.
-
-    # We eagerly attempt to load the heavy SAM 3 model once when the server boots so
-    # the first user request does not pay the model download/initialization cost.
-
-    # If SAM 3 cannot be loaded (missing Hugging Face access, missing token, etc.),
-    # we do *not* crash the server; endpoints will fail later with a clear error.
     try:
         load_sam3()
     except Exception as e:
         logger.warning(f"SAM 3 preload skipped: {e}")
+
+    try:
+        load_yolo()
+    except Exception as e:
+        logger.warning(f"YOLO preload skipped: {e}")
 
     try:
         await refresh_if_stale()
@@ -41,10 +47,8 @@ async def startup():
 
 
 app.add_middleware(
-    # Allow the frontend (running on a different port) to call this API.
-    # This is required for browser fetch() requests to /detect and /streetview-image.
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8080", "http://127.0.0.1:5173", "http://127.0.0.1:8080"],
+    allow_origins=cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -53,10 +57,17 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    # Simple health check endpoint for debugging and monitoring.
-
-    # This is intentionally lightweight and does not require the SAM 3 model.
-    return {"status": "ok"}
+    status = cache_status()
+    return {
+        "status": "ok",
+        "sam3_loaded": is_sam3_loaded(),
+        "yolo_available": is_yolo_loaded(),
+        "cache_landfills": status["cache_landfills"],
+        "cache_solar": status["cache_solar"],
+        "streetview_configured": google_maps_api_key() is not None,
+        "landfills_fetched_at": status["landfills_fetched_at"],
+        "solar_fetched_at": status["solar_fetched_at"],
+    }
 
 
 @app.get("/landfills")
@@ -81,7 +92,30 @@ async def solar_stats():
         raise HTTPException(500, f"Failed to read solar stats cache: {e}")
 
 
-_GMAPS_EMBED_KEY = "AIzaSyCmL18misQw9KdwqGaw3zHkitj8vG6QF2Y"
+@app.post("/cache/refresh")
+async def cache_refresh(
+    x_cache_refresh_secret: str | None = Header(default=None, alias="X-Cache-Refresh-Secret"),
+):
+    secret = cache_refresh_secret()
+    if secret and x_cache_refresh_secret != secret:
+        raise HTTPException(401, "Invalid cache refresh secret")
+
+    results: dict[str, str] = {}
+    try:
+        await refresh_landfills()
+        results["landfills"] = "refreshed"
+    except Exception as e:
+        logger.exception("Landfills cache refresh failed")
+        results["landfills"] = f"error: {e}"
+
+    try:
+        await refresh_solar_stats()
+        results["solar"] = "refreshed"
+    except Exception as e:
+        logger.exception("Solar stats cache refresh failed")
+        results["solar"] = f"error: {e}"
+
+    return {"status": "ok", "results": results}
 
 
 @app.get("/streetview-image")
@@ -90,10 +124,15 @@ async def streetview_image(
     lng: float = Query(...),
     heading: float = Query(0),
 ):
-    # Fetch a single Street View image facing toward the pin location.
     import math
 
-    # User-Agent can help avoid some automated-request throttling from the provider.
+    api_key = google_maps_api_key()
+    if not api_key:
+        raise HTTPException(
+            503,
+            "Street View is not configured. Set GOOGLE_MAPS_API_KEY in the environment.",
+        )
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -102,21 +141,17 @@ async def streetview_image(
     }
 
     try:
-        # We use the Google Street View metadata endpoint to resolve the panorama id (pano_id)
-        # that is closest to the requested lat/lng.
-
-        # Then we request a 640x640 thumbnail tile at the computed heading so that
-        # the resulting image faces toward the selected pin.
         async with httpx.AsyncClient(timeout=20, headers=headers, follow_redirects=True) as client:
             meta_url = (
                 f"https://maps.googleapis.com/maps/api/streetview/metadata"
-                f"?location={lat},{lng}&source=outdoor&key={_GMAPS_EMBED_KEY}"
+                f"?location={lat},{lng}&source=outdoor&key={api_key}"
             )
             meta_resp = await client.get(meta_url)
             if meta_resp.status_code != 200:
                 raise HTTPException(502, "Street view metadata lookup failed")
 
             import json
+
             meta = json.loads(meta_resp.text)
             if meta.get("status") != "OK":
                 raise HTTPException(
@@ -129,7 +164,6 @@ async def streetview_image(
             pano_lat = meta.get("location", {}).get("lat", lat)
             pano_lng = meta.get("location", {}).get("lng", lng)
 
-            # Compute heading from panorama position toward the dropped pin
             d_lat = lat - pano_lat
             d_lng = lng - pano_lng
             if abs(d_lat) > 1e-7 or abs(d_lng) > 1e-7:
@@ -163,34 +197,29 @@ async def streetview_image(
         raise HTTPException(502, f"Street view fetch failed: {e}")
 
 
-
 @app.post("/detect")
 async def detect(
     file: UploadFile = File(...),
     mode: str = Query("streetview", pattern="^(streetview|satellite)$"),
     engine: str = Query("sam3", pattern="^(sam3|yolo)$"),
 ):
-    # Main detection endpoint.
-
-    # The frontend sends an uploaded image (from Street View or a map screenshot/upload)
-    # along with query parameters:
-    #   - `mode`: streetview (entrances) | satellite (buildings)
-    #   - `engine`: sam3 | yolo  (YOLO-World open-vocab if *world*.pt present, else COCO YOLOv8)
-
-    # SAM 3: `run_detection()` in `sam3_service.py`.
-    # YOLO: `run_yolo_detection()` in `yolo_service.py`.
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "File must be an image (jpeg, png, webp)")
 
     try:
-        # UploadFile is streamed by FastAPI; we read the bytes in memory
-        # because SAM 3 expects image bytes that we can wrap in a PIL image.
         image_bytes = await file.read()
     except Exception as e:
         raise HTTPException(400, f"Failed to read file: {e}")
 
     if len(image_bytes) == 0:
         raise HTTPException(400, "Empty file")
+
+    limit = max_upload_bytes()
+    if len(image_bytes) > limit:
+        raise HTTPException(
+            413,
+            f"Image exceeds maximum upload size ({limit // (1024 * 1024)} MB)",
+        )
 
     logger.info("POST /detect mode=%s engine=%s bytes=%s", mode, engine, len(image_bytes))
 
@@ -199,9 +228,7 @@ async def detect(
             return run_yolo_detection(image_bytes, mode=mode)
         return run_detection(image_bytes, mode=mode)
     except ValueError as e:
-        # If our service validates inputs and raises ValueError, surface it as a 400.
         raise HTTPException(400, str(e))
     except Exception as e:
-        # Any other unexpected errors become 500. We log the full stack trace for debugging.
         logger.exception("Detection failed")
         raise HTTPException(500, f"Detection failed: {str(e)}")
