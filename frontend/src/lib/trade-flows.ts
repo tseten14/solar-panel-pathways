@@ -37,12 +37,16 @@ function stateCentroid(state: string, landfills: Landfill[]): { lat: number; lng
   };
 }
 
+/** Below this many open landfills per GW of solar, a state is disposal-constrained. */
+const SPARSE_LANDFILLS_PER_GW = 2;
+const ADEQUATE_LANDFILLS_PER_GW = 4;
+
 function isFlowOrigin(c: StateCoverage): boolean {
-  return c.wasteDesert || (c.acceptanceProbability < 35 && c.solarMw >= 300);
+  return c.wasteDesert || (c.landfillsPerGw < SPARSE_LANDFILLS_PER_GW && c.solarMw >= 300);
 }
 
 function isFlowDestination(c: StateCoverage): boolean {
-  return !c.wasteDesert && c.landfillCount >= 3 && c.acceptanceProbability >= 45;
+  return !c.wasteDesert && c.landfillCount >= 3 && c.landfillsPerGw >= ADEQUATE_LANDFILLS_PER_GW;
 }
 
 function destinationLabel(dest: StateCoverage): string {
@@ -64,7 +68,7 @@ function inferLegalStatus(distanceMiles: number): ModelledTradeRoute["legalStatu
 }
 
 function destinationScore(dest: StateCoverage, distanceMiles: number): number {
-  return dest.landfillCount * 10 + dest.acceptanceProbability - distanceMiles / 25;
+  return dest.landfillCount * 10 + dest.landfillsPerGw - distanceMiles / 25;
 }
 
 /**
@@ -139,7 +143,7 @@ export function computeModelledTradeRoutes(
       isInternational: false,
       rationale: origin.wasteDesert
         ? `Waste desert: ${origin.landfillCount} open sites, ${origin.solarMw.toLocaleString()} MW solar`
-        : `Low coverage (${origin.acceptanceProbability}% score) with ${origin.solarMw.toLocaleString()} MW solar`,
+        : `Sparse disposal: ${origin.landfillsPerGw} open landfills per GW across ${origin.solarMw.toLocaleString()} MW solar`,
     });
   }
 

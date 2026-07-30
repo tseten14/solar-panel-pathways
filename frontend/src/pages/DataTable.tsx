@@ -10,7 +10,7 @@ import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
 import type { Landfill } from "@/types/landfill";
 
-type SortKey = "name" | "state" | "ownership" | "acceptsPV" | "operationalStatus";
+type SortKey = "name" | "state" | "ownership" | "operationalStatus";
 
 export default function DataTable() {
   const { data: landfills = [], isLoading, isError, refetch } = useLandfills();
@@ -52,6 +52,8 @@ export default function DataTable() {
       "Accepts PV",
       "Latitude",
       "Longitude",
+      "Waste in place (tons)",
+      "Design capacity (tons)",
       "Source",
     ];
     const rows = landfills.map((l) => [
@@ -60,9 +62,10 @@ export default function DataTable() {
       l.county,
       l.ownership,
       l.operationalStatus ?? "",
-      l.acceptsPV,
       l.lat,
       l.lng,
+      l.wasteInPlaceTons ?? "",
+      l.designCapacityTons ?? "",
       l.source ?? "EPA LMOP",
     ]);
     const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -83,12 +86,6 @@ export default function DataTable() {
         <ChevronDown className="h-3 w-3 inline ml-1" />
       )
     ) : null;
-
-  const pvBadgeVariant = (status: Landfill["acceptsPV"]) => {
-    if (status === "Yes") return "default" as const;
-    if (status === "No") return "destructive" as const;
-    return "secondary" as const;
-  };
 
   if (isLoading) {
     return (
@@ -159,10 +156,8 @@ export default function DataTable() {
                   Status
                   <SortIcon col="operationalStatus" />
                 </TableHead>
-                <TableHead className="cursor-pointer sticky top-0 bg-card" onClick={() => handleSort("acceptsPV")}>
-                  Accepts PV
-                  <SortIcon col="acceptsPV" />
-                </TableHead>
+                <TableHead className="sticky top-0 bg-card text-right">Waste in place</TableHead>
+                <TableHead className="sticky top-0 bg-card text-right">Design capacity</TableHead>
                 <TableHead className="sticky top-0 bg-card">Coordinates</TableHead>
               </TableRow>
             </TableHeader>
@@ -178,10 +173,11 @@ export default function DataTable() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground">{l.operationalStatus ?? "—"}</TableCell>
-                  <TableCell>
-                    <Badge variant={pvBadgeVariant(l.acceptsPV)} className="text-xs">
-                      {l.acceptsPV}
-                    </Badge>
+                  <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                    {l.wasteInPlaceTons != null ? Math.round(l.wasteInPlaceTons).toLocaleString() : "—"}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                    {l.designCapacityTons != null ? Math.round(l.designCapacityTons).toLocaleString() : "—"}
                   </TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">
                     {l.lat.toFixed(4)}, {l.lng.toFixed(4)}

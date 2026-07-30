@@ -1,5 +1,30 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchSolarFacilitiesByState, fetchSolarStatsByState } from "@/lib/solar-api";
+import {
+  fetchSolarCohorts,
+  fetchSolarFacilitiesByState,
+  fetchSolarStatsByState,
+  fetchSolarTechMix,
+} from "@/lib/solar-api";
+
+/** Installed capacity by state and commissioning year (USPVDB p_year). */
+export function useSolarCohorts() {
+  return useQuery({
+    queryKey: ["solar", "cohorts"],
+    queryFn: fetchSolarCohorts,
+    staleTime: 1000 * 60 * 60,
+    gcTime: 1000 * 60 * 60 * 24,
+  });
+}
+
+/** Installed capacity by module chemistry (USPVDB p_tech_sec). */
+export function useSolarTechMix() {
+  return useQuery({
+    queryKey: ["solar", "tech-mix"],
+    queryFn: fetchSolarTechMix,
+    staleTime: 1000 * 60 * 60,
+    gcTime: 1000 * 60 * 60 * 24,
+  });
+}
 
 export function useSolarStatsByState() {
   return useQuery({

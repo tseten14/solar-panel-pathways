@@ -3,9 +3,7 @@ import type { Landfill } from "@/types/landfill";
 import type { SolarStateStats } from "@/types/solar";
 import {
   haversineMiles,
-  computeAcceptanceProbability,
-  computeAvgCost,
-  computeConfidenceInterval,
+  computeRemainingCapacityTons,
   isWasteDesert,
   computeStateCoverage,
 } from "@/lib/state-coverage";
@@ -15,14 +13,7 @@ function makeLandfill(overrides: Partial<Landfill> & Pick<Landfill, "id" | "stat
     name: "Test Landfill",
     county: "Test",
     ownership: "Private",
-    acceptsPV: "Unknown",
-    tippingFee: null,
-    tippingFeeUnit: "$/ton",
-    minLoad: null,
-    tclpRequired: false,
     notes: "",
-    lastSurveyed: "",
-    surveyorName: "",
     operationalStatus: "Open",
     ...overrides,
   };
@@ -40,33 +31,25 @@ describe("haversineMiles", () => {
   });
 });
 
-describe("computeAcceptanceProbability", () => {
-  it("scales with landfill density per 1000 MW", () => {
-    expect(computeAcceptanceProbability(10, 1000)).toBe(100);
-    expect(computeAcceptanceProbability(2, 1000)).toBe(30);
-    expect(computeAcceptanceProbability(0, 500)).toBe(0);
-  });
-
-  it("handles zero solar MW with fallback scaling", () => {
-    expect(computeAcceptanceProbability(5, 0)).toBe(100);
-  });
-});
-
-describe("computeAvgCost", () => {
-  it("blends municipal and private placeholder costs", () => {
+describe("computeRemainingCapacityTons", () => {
+  it("sums design capacity minus waste in place over reporting landfills", () => {
     const landfills = [
-      makeLandfill({ id: "1", state: "TX", lat: 30, lng: -97, ownership: "Municipal" }),
-      makeLandfill({ id: "2", state: "TX", lat: 30.1, lng: -97.1, ownership: "Private" }),
+      makeLandfill({ id: "1", state: "TX", lat: 30, lng: -97, designCapacityTons: 1000, wasteInPlaceTons: 400 }),
+      makeLandfill({ id: "2", state: "TX", lat: 30.1, lng: -97.1, designCapacityTons: 500, wasteInPlaceTons: 500 }),
     ];
-    expect(computeAvgCost(landfills)).toBe(79);
+    expect(computeRemainingCapacityTons(landfills)).toBe(600);
   });
 
-  it("uses tipping fees when available", () => {
+  it("clamps negative headroom to zero when a site is over its permit", () => {
     const landfills = [
-      makeLandfill({ id: "1", state: "TX", lat: 30, lng: -97, tippingFee: 90 }),
-      makeLandfill({ id: "2", state: "TX", lat: 30.1, lng: -97.1, tippingFee: 70 }),
+      makeLandfill({ id: "1", state: "TX", lat: 30, lng: -97, designCapacityTons: 100, wasteInPlaceTons: 900 }),
     ];
-    expect(computeAvgCost(landfills)).toBe(80);
+    expect(computeRemainingCapacityTons(landfills)).toBe(0);
+  });
+
+  it("returns null when no landfill reports both figures", () => {
+    const landfills = [makeLandfill({ id: "1", state: "TX", lat: 30, lng: -97 })];
+    expect(computeRemainingCapacityTons(landfills)).toBeNull();
   });
 });
 
@@ -82,16 +65,6 @@ describe("isWasteDesert", () => {
   it("does not flag adequate nearby coverage", () => {
     expect(isWasteDesert(5, 40, 600)).toBe(false);
     expect(isWasteDesert(5, 120, 400)).toBe(false);
-  });
-});
-
-describe("computeConfidenceInterval", () => {
-  it("widens interval when landfill count is low", () => {
-    const low = computeConfidenceInterval(50, 1);
-    const high = computeConfidenceInterval(50, 25);
-    expect(low[1] - low[0]).toBeGreaterThan(high[1] - high[0]);
-    expect(low[0]).toBeGreaterThanOrEqual(0);
-    expect(low[1]).toBeLessThanOrEqual(100);
   });
 });
 
@@ -127,7 +100,7 @@ describe("computeStateCoverage", () => {
       solarMw: 10000,
       wasteDesert: false,
     });
-    expect(ca!.acceptanceProbability).toBeGreaterThan(0);
+    expect(ca!.landfillsPerGw).toBeCloseTo(0.4, 2);
     expect(ca!.nearestFacility).toBeTruthy();
     expect(ca!.nearestDistance).toBeLessThan(50);
   });

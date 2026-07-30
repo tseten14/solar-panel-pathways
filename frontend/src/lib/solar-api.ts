@@ -1,5 +1,5 @@
 import { queryArcGISFeatures } from "@/lib/arcgis";
-import type { SolarFacility, SolarStateStats } from "@/types/solar";
+import type { SolarCohort, SolarFacility, SolarStateStats, SolarTechMix } from "@/types/solar";
 
 const USPVDB_URL =
   "https://energy.usgs.gov/arcgis/rest/services/Hosted/uspvdbDyn/FeatureServer/0/query";
@@ -138,4 +138,61 @@ export async function fetchSolarFacilitiesByState(state: string): Promise<SolarF
   });
 
   return features.map(mapSolarFeature).filter((f): f is SolarFacility => f !== null);
+}
+
+const CAPACITY_STATS = JSON.stringify([
+  { statisticType: "sum", onStatisticField: "p_cap_dc", outStatisticFieldName: "total_mw" },
+  { statisticType: "count", onStatisticField: "p_name", outStatisticFieldName: "facility_count" },
+]);
+
+async function queryGrouped<T>(
+  groupBy: string,
+  where: string,
+  map: (a: Record<string, unknown>) => T | null,
+): Promise<T[]> {
+  const search = new URLSearchParams({
+    where,
+    outStatistics: CAPACITY_STATS,
+    groupByFieldsForStatistics: groupBy,
+    f: "json",
+  });
+  const res = await fetch(`${USPVDB_URL}?${search}`);
+  if (!res.ok) throw new Error(`USPVDB grouped query failed (${res.status})`);
+  const data = (await res.json()) as {
+    features?: { attributes: Record<string, unknown> }[];
+    error?: { message?: string };
+  };
+  if (data.error?.message) throw new Error(data.error.message);
+  return (data.features ?? []).map((f) => map(f.attributes)).filter((x): x is T => x !== null);
+}
+
+/**
+ * Installed capacity grouped by state and commissioning year (USPVDB `p_year`).
+ * This is the real basis for projecting when panels reach end of life.
+ */
+export function fetchSolarCohorts(): Promise<SolarCohort[]> {
+  return queryGrouped<SolarCohort>("p_state,p_year", "p_year>0", (a) => {
+    const state = a.p_state as string | null;
+    const year = Number(a.p_year);
+    if (!state || !Number.isFinite(year) || year <= 0) return null;
+    return {
+      state,
+      year,
+      facilityCount: Number(a.facility_count) || 0,
+      capacityMw: Math.round((Number(a.total_mw) || 0) * 10) / 10,
+    };
+  });
+}
+
+/** Installed capacity grouped by module chemistry (USPVDB `p_tech_sec`). */
+export function fetchSolarTechMix(): Promise<SolarTechMix[]> {
+  return queryGrouped<SolarTechMix>("p_tech_sec", "1=1", (a) => {
+    const tech = (a.p_tech_sec as string | null)?.trim();
+    if (!tech) return null;
+    return {
+      tech,
+      facilityCount: Number(a.facility_count) || 0,
+      capacityMw: Math.round((Number(a.total_mw) || 0) * 10) / 10,
+    };
+  }).then((rows) => rows.sort((a, b) => b.capacityMw - a.capacityMw));
 }

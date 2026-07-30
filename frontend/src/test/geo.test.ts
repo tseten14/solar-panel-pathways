@@ -27,14 +27,7 @@ describe("findNearestLandfill", () => {
     state: "TX",
     county: "Harris",
     ownership: "Private",
-    acceptsPV: "Unknown",
-    tippingFee: null,
-    tippingFeeUnit: "$/ton",
-    minLoad: null,
-    tclpRequired: false,
     notes: "",
-    lastSurveyed: "",
-    surveyorName: "",
   };
 
   const landfills: Landfill[] = [

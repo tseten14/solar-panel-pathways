@@ -12,11 +12,11 @@ import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState"
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import "leaflet/dist/leaflet.css";
 
-const statusColor = (s: string) => {
-  if (s === "Yes") return "#22c55e";
-  if (s === "No") return "#ef4444";
-  if (s === "Conditional") return "#eab308";
-  return "#64748b";
+/** Colour by EPA LMOP operational status (a real reported field). */
+const statusColor = (s?: string) => {
+  if (s === "Open") return "hsl(152 40% 52%)";
+  if (s === "Closed") return "hsl(150 8% 45%)";
+  return "hsl(38 92% 50%)";
 };
 
 export default function LandfillMap() {
@@ -39,7 +39,7 @@ export default function LandfillMap() {
     return landfills.filter((l) => {
       if (stateFilter !== "all" && l.state !== stateFilter) return false;
       if (ownershipFilter !== "all" && l.ownership !== ownershipFilter) return false;
-      if (statusFilter !== "all" && l.acceptsPV !== statusFilter) return false;
+      if (statusFilter !== "all" && (l.operationalStatus ?? "Unknown") !== statusFilter) return false;
       return true;
     });
   }, [landfills, stateFilter, ownershipFilter, statusFilter]);
@@ -53,7 +53,7 @@ export default function LandfillMap() {
         id: lf.id,
         lat: lf.lat,
         lng: lf.lng,
-        color: statusColor(lf.acceptsPV),
+        color: statusColor(lf.operationalStatus),
         onClick: () => setSelectedLandfillId(lf.id),
       })),
     [filtered],
@@ -110,17 +110,16 @@ export default function LandfillMap() {
         </div>
 
         <div>
-          <label className="text-xs text-muted-foreground">PV Acceptance</label>
+          <label className="text-xs text-muted-foreground">Status</label>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="mt-1">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All</SelectItem>
+              <SelectItem value="Open">Open</SelectItem>
+              <SelectItem value="Closed">Closed</SelectItem>
               <SelectItem value="Unknown">Unknown</SelectItem>
-              <SelectItem value="Yes">Accepts</SelectItem>
-              <SelectItem value="No">Rejects</SelectItem>
-              <SelectItem value="Conditional">Conditional</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -206,25 +205,34 @@ function LandfillPopup({ landfill: l }: { landfill: Landfill }) {
       <h3 className="font-semibold text-sm">{l.name}</h3>
       <div className="flex gap-2 flex-wrap">
         <Badge
-          variant={l.acceptsPV === "Yes" ? "default" : l.acceptsPV === "No" ? "destructive" : "secondary"}
+          variant={l.operationalStatus === "Open" ? "default" : "secondary"}
           className="text-xs"
         >
-          PV: {l.acceptsPV}
+          {l.operationalStatus ?? "Status unknown"}
         </Badge>
         <Badge variant="outline" className="text-xs">
           {l.ownership}
         </Badge>
-        {l.operationalStatus && (
-          <Badge variant="outline" className="text-xs">
-            {l.operationalStatus}
-          </Badge>
-        )}
       </div>
       <div className="text-xs space-y-1">
         <p>
           <span className="text-muted-foreground">Location:</span> {l.county}, {l.state}
         </p>
-        <p className="italic text-muted-foreground">{l.notes}</p>
+        {l.wasteInPlaceTons != null && (
+          <p>
+            <span className="text-muted-foreground">Waste in place:</span>{" "}
+            {Math.round(l.wasteInPlaceTons).toLocaleString()} tons
+          </p>
+        )}
+        {l.designCapacityTons != null && (
+          <p>
+            <span className="text-muted-foreground">Design capacity:</span>{" "}
+            {Math.round(l.designCapacityTons).toLocaleString()} tons
+          </p>
+        )}
+        <p className="text-muted-foreground">
+          PV acceptance policy is not published by any public API — not surveyed.
+        </p>
       </div>
     </div>
   );

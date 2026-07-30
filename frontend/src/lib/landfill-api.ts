@@ -64,17 +64,12 @@ export function mapLmopFeature(feature: { attributes: LmopAttributes }): Landfil
     lat,
     lng,
     ownership: inferOwnership(a.landfill_owner_org),
-    acceptsPV: "Unknown",
-    tippingFee: null,
-    tippingFeeUnit: "$/ton",
-    minLoad: null,
-    tclpRequired: false,
     notes: [status !== "Unknown" ? `Status: ${status}.` : "", capNote, wasteNote, "Source: U.S. EPA LMOP database."]
       .filter(Boolean)
       .join(" "),
-    lastSurveyed: "",
-    surveyorName: "",
     operationalStatus: status,
+    designCapacityTons: a.landfill_design_cap ?? null,
+    wasteInPlaceTons: a.waste_in_place_tons ?? null,
     source: "EPA LMOP",
   };
 }

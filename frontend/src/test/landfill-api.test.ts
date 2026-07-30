@@ -49,7 +49,6 @@ describe("mapLmopFeature", () => {
       lat: 29.76,
       lng: -95.37,
       ownership: "Private",
-      acceptsPV: "Unknown",
       operationalStatus: "Open",
       source: "EPA LMOP",
     });

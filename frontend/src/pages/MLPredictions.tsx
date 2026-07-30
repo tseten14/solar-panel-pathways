@@ -1,48 +1,86 @@
 import { useMemo, useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
-import { AlertTriangle, MapPin, DollarSign, TrendingUp, Info } from "lucide-react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RTooltip,
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+} from "recharts";
+import { AlertTriangle, MapPin, Recycle, CalendarClock, Info } from "lucide-react";
 import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useLandfills } from "@/hooks/useLandfills";
-import { useSolarStatsByState } from "@/hooks/useSolarData";
+import { useSolarCohorts, useSolarStatsByState, useSolarTechMix } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
-import { computeStateCoverage } from "@/lib/state-coverage";
+import { WASTE_HORIZON_YEARS, computeStateCoverage } from "@/lib/state-coverage";
+import {
+  PANEL_LIFETIME_YEARS,
+  TONNES_PER_MW,
+  averageFleetAge,
+  projectWaste,
+  summariseHazard,
+} from "@/lib/pv-waste";
+
+const AXIS = "hsl(150 8% 58%)";
+const GRID = "hsl(150 11% 24%)";
+const TOOLTIP_STYLE = {
+  background: "hsl(150 14% 15%)",
+  border: "1px solid hsl(150 11% 24%)",
+  borderRadius: 8,
+  color: "hsl(150 6% 92%)",
+};
+
+/** Panel-waste tonnages span kilotonnes to megatonnes; keep the tile readable. */
+function formatTonnes(t: number) {
+  if (t >= 1e6) return <>{(t / 1e6).toFixed(1)}<span className="text-lg text-muted-foreground"> Mt</span></>;
+  if (t >= 1e3) return <>{Math.round(t / 1e3).toLocaleString()}<span className="text-lg text-muted-foreground"> kt</span></>;
+  return <>{Math.round(t).toLocaleString()}<span className="text-lg text-muted-foreground"> t</span></>;
+}
 
 export default function MLPredictions() {
   const { data: landfills = [], isLoading: landfillsLoading, isError: landfillsError, refetch } = useLandfills();
   const { data: solarStats = [], isLoading: solarLoading, isError: solarError } = useSolarStatsByState();
+  const { data: cohorts = [], isLoading: cohortsLoading } = useSolarCohorts();
+  const { data: techMix = [] } = useSolarTechMix();
 
   const coverage = useMemo(
-    () => computeStateCoverage(landfills, solarStats),
-    [landfills, solarStats],
+    () => computeStateCoverage(landfills, solarStats, cohorts),
+    [landfills, solarStats, cohorts],
   );
 
   const [selectedState, setSelectedState] = useState("CA");
   const effectiveState = coverage.some((c) => c.state === selectedState)
     ? selectedState
     : coverage[0]?.state ?? "CA";
-  const prediction = coverage.find((p) => p.state === effectiveState);
+  const stateRow = coverage.find((p) => p.state === effectiveState);
 
-  const costData = coverage.map((p) => ({
-    state: p.state,
-    cost: p.avgCost,
-    acceptance: p.acceptanceProbability,
-  }));
+  const wasteCurve = useMemo(
+    () => projectWaste(cohorts, { state: effectiveState, horizonYears: WASTE_HORIZON_YEARS }),
+    [cohorts, effectiveState],
+  );
+  const fleetAge = useMemo(() => averageFleetAge(cohorts, effectiveState), [cohorts, effectiveState]);
+  const hazard = useMemo(() => summariseHazard(techMix), [techMix]);
+
+  // Top states by modelled retirement tonnage over the horizon — all from real cohorts.
+  const wasteByState = useMemo(
+    () =>
+      [...coverage]
+        .filter((c) => c.projectedWasteTonnes > 0)
+        .sort((a, b) => b.projectedWasteTonnes - a.projectedWasteTonnes)
+        .slice(0, 25)
+        .map((c) => ({ state: c.state, tonnes: c.projectedWasteTonnes })),
+    [coverage],
+  );
+
   const wasteDeserts = coverage.filter((p) => p.wasteDesert);
 
-  const confidenceData = prediction
-    ? Array.from({ length: 20 }, (_, i) => {
-        const x = prediction.confidence[0] + (i * (prediction.confidence[1] - prediction.confidence[0])) / 19;
-        const mid = (prediction.confidence[0] + prediction.confidence[1]) / 2;
-        const sigma = (prediction.confidence[1] - prediction.confidence[0]) / 4;
-        const y = Math.exp(-0.5 * Math.pow((x - mid) / sigma, 2));
-        return { x: Math.round(x), y: Math.round(y * 100) };
-      })
-    : [];
-
-  const isLoading = landfillsLoading || solarLoading;
+  const isLoading = landfillsLoading || solarLoading || cohortsLoading;
   const isError = landfillsError || solarError;
 
   if (isLoading) {
@@ -77,115 +115,201 @@ export default function MLPredictions() {
                 </button>
               </TooltipTrigger>
               <TooltipContent className="max-w-sm">
-                Heuristic estimates from EPA LMOP landfill locations, USGS USPVDB solar capacity, and
-                local PV survey enrichment — not a trained machine-learning model.
+                Landfill counts, capacities and solar capacity are measured (EPA LMOP, USGS USPVDB).
+                Retirement tonnage is modelled by shifting each real install-year cohort forward{" "}
+                {PANEL_LIFETIME_YEARS} years at {TONNES_PER_MW} t/MW (IRENA/IEA-PVPS). No tipping-fee
+                or PV-acceptance data is shown — no public API publishes it.
               </TooltipContent>
             </Tooltip>
           </div>
-          <p className="text-sm text-muted-foreground mt-1">Policy and disposal estimates · EPA LMOP + USGS USPVDB</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Disposal capacity vs. modelled panel retirement · EPA LMOP + USGS USPVDB
+          </p>
           <DataFreshnessBadge />
         </div>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">Analyze state:</span>
           <Select value={effectiveState} onValueChange={setSelectedState}>
-            <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {coverage.map((p) => <SelectItem key={p.state} value={p.state}>{p.state}</SelectItem>)}
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              {coverage.map((c) => (
+                <SelectItem key={c.state} value={c.state}>
+                  {c.state}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
       </div>
 
-      {/* State prediction detail */}
-      {prediction && (
+      {stateRow && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="glass-card p-4">
             <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              <span className="stat-label">Acceptance Prob.</span>
+              <Recycle className="h-4 w-4 text-primary" />
+              <span className="stat-label">{WASTE_HORIZON_YEARS}-yr Panel Waste</span>
             </div>
-            <p className="stat-value" style={{ color: prediction.acceptanceProbability > 50 ? "hsl(152 40% 52%)" : "hsl(4 72% 56%)" }}>
-              {prediction.acceptanceProbability}%
+            <p className="stat-value text-foreground">
+              {formatTonnes(stateRow.projectedWasteTonnes)}
             </p>
-            <p className="text-xs text-muted-foreground mt-1">CI: {prediction.confidence[0]}–{prediction.confidence[1]}%</p>
+            <p className="text-xs text-muted-foreground mt-1">Modelled from USPVDB install years</p>
           </div>
+
           <div className="glass-card p-4">
             <div className="flex items-center gap-2 mb-2">
-              <DollarSign className="h-4 w-4 text-primary" />
-              <span className="stat-label">Avg Disposal Cost</span>
+              <CalendarClock className="h-4 w-4 text-primary" />
+              <span className="stat-label">Peak Retirement</span>
             </div>
-            <p className="stat-value text-foreground">${prediction.avgCost}<span className="text-lg text-muted-foreground">/ton</span></p>
+            <p className="stat-value text-foreground">{stateRow.peakRetirementYear ?? "—"}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Fleet avg {fleetAge != null ? `${fleetAge}y` : "—"} old · retires at {PANEL_LIFETIME_YEARS}y
+            </p>
           </div>
+
           <div className="glass-card p-4">
             <div className="flex items-center gap-2 mb-2">
               <MapPin className="h-4 w-4 text-primary" />
-              <span className="stat-label">Nearest Facility</span>
+              <span className="stat-label">Landfill Headroom</span>
             </div>
-            <p className="text-sm font-medium text-foreground">{prediction.nearestFacility}</p>
-            <p className="text-xs text-muted-foreground">{prediction.nearestDistance} miles away</p>
+            <p className="stat-value text-foreground">
+              {stateRow.remainingCapacityTons != null
+                ? `${(stateRow.remainingCapacityTons / 1e6).toFixed(1)}M`
+                : "—"}
+              <span className="text-lg text-muted-foreground"> t</span>
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {stateRow.wasteToCapacityPct != null
+                ? `${WASTE_HORIZON_YEARS}-yr panel waste = ${stateRow.wasteToCapacityPct}% of headroom`
+                : "Capacity not reported by LMOP"}
+            </p>
           </div>
+
           <div className="glass-card p-4">
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="h-4 w-4 text-primary" />
-              <span className="stat-label">Waste Desert</span>
+              <span className="stat-label">Disposal Density</span>
             </div>
-            {prediction.wasteDesert ? (
-              <Badge variant="destructive" className="mt-1">⚠ Waste Desert</Badge>
-            ) : (
-              <Badge variant="default" className="mt-1">Adequate Coverage</Badge>
-            )}
+            <p className="stat-value text-foreground">
+              {stateRow.landfillsPerGw}
+              <span className="text-lg text-muted-foreground"> /GW</span>
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {stateRow.landfillCount} open sites · {Math.round(stateRow.solarMw).toLocaleString()} MW
+            </p>
           </div>
         </div>
       )}
 
-      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-4">Cost by Region ($/ton)</h3>
+          <h3 className="text-sm font-semibold text-foreground">
+            Projected annual panel retirement — {effectiveState}
+          </h3>
+          <p className="text-xs text-muted-foreground mb-4">
+            Real install-year cohorts shifted {PANEL_LIFETIME_YEARS} years · modelled
+          </p>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={costData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(150 11% 24%)" />
-              <XAxis dataKey="state" stroke="hsl(150 8% 58%)" fontSize={12} />
-              <YAxis stroke="hsl(150 8% 58%)" fontSize={12} />
-              <RTooltip contentStyle={{ background: "hsl(150 14% 15%)", border: "1px solid hsl(150 11% 24%)", borderRadius: 8, color: "hsl(150 6% 92%)" }} />
-              <Bar dataKey="cost" fill="hsl(152 34% 44%)" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="glass-card p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-4">Confidence Distribution — {effectiveState}</h3>
-          <ResponsiveContainer width="100%" height={280}>
-            <AreaChart data={confidenceData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(150 11% 24%)" />
-              <XAxis dataKey="x" stroke="hsl(150 8% 58%)" fontSize={12} label={{ value: "Acceptance %", position: "insideBottom", offset: -5, style: { fill: "hsl(150 8% 58%)" } }} />
-              <YAxis stroke="hsl(150 8% 58%)" fontSize={12} />
-              <RTooltip contentStyle={{ background: "hsl(150 14% 15%)", border: "1px solid hsl(150 11% 24%)", borderRadius: 8, color: "hsl(150 6% 92%)" }} />
-              <Area type="monotone" dataKey="y" stroke="hsl(152 34% 44%)" fill="hsl(152 34% 44%)" fillOpacity={0.2} />
+            <AreaChart data={wasteCurve}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+              <XAxis dataKey="year" stroke={AXIS} fontSize={12} />
+              <YAxis
+                stroke={AXIS}
+                fontSize={12}
+                tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))}
+              />
+              <RTooltip
+                contentStyle={TOOLTIP_STYLE}
+                formatter={(v: number) => [`${Math.round(v).toLocaleString()} t`, "Retiring"]}
+              />
+              <Area
+                type="monotone"
+                dataKey="retiringTonnes"
+                stroke="hsl(152 34% 44%)"
+                fill="hsl(152 34% 44%)"
+                fillOpacity={0.22}
+              />
             </AreaChart>
           </ResponsiveContainer>
         </div>
-      </div>
 
-      {/* Waste Deserts */}
-      <div className="glass-card p-5">
-        <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-status-reject" />
-          Waste Desert States
-        </h3>
-        <div className="flex flex-wrap gap-2">
-          {wasteDeserts.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No waste desert states detected in current data.</p>
-          ) : (
-            wasteDeserts.map((p) => (
-              <div key={p.state} className="px-3 py-2 rounded-lg border border-destructive/30 bg-destructive/10">
-                <p className="text-sm font-medium text-foreground">{p.state}</p>
-                <p className="text-xs text-muted-foreground">{p.acceptanceProbability}% — {p.nearestDistance}mi to nearest</p>
-              </div>
-            ))
-          )}
+        <div className="glass-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">Modelled {WASTE_HORIZON_YEARS}-year waste by state</h3>
+          <p className="text-xs text-muted-foreground mb-4">Top 25 states by retiring tonnage</p>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={wasteByState}>
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID} />
+              <XAxis dataKey="state" stroke={AXIS} fontSize={11} interval={0} />
+              <YAxis
+                stroke={AXIS}
+                fontSize={12}
+                tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))}
+              />
+              <RTooltip
+                contentStyle={TOOLTIP_STYLE}
+                formatter={(v: number) => [`${Math.round(v).toLocaleString()} t`, `${WASTE_HORIZON_YEARS}-yr waste`]}
+              />
+              <Bar dataKey="tonnes" fill="hsl(152 34% 44%)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
+
+      {hazard.length > 0 && (
+        <div className="glass-card p-5">
+          <h3 className="text-sm font-semibold text-foreground">
+            National module chemistry — hazard profile
+          </h3>
+          <p className="text-xs text-muted-foreground mb-4">
+            USGS USPVDB <code className="font-mono">p_tech_sec</code> · determines which TCLP metal
+            governs disposal
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {hazard.map((h) => (
+              <div key={h.hazardClass} className="rounded-lg border border-border/60 bg-background/20 p-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-medium text-foreground capitalize">
+                    {h.hazardClass.replace("-", " ")}
+                  </span>
+                  <span className="font-mono text-xs text-primary">{h.shareOfMw}%</span>
+                </div>
+                <p className="font-mono text-xs text-muted-foreground mt-1">
+                  {h.capacityMw.toLocaleString()} MW · {h.facilityCount.toLocaleString()} plants
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-1.5">{h.note}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {wasteDeserts.length > 0 && (
+        <div className="glass-card p-5">
+          <div className="flex items-center gap-2 mb-1">
+            <AlertTriangle className="h-4 w-4 text-destructive" />
+            <h3 className="text-sm font-semibold text-foreground">Waste Desert States</h3>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">
+            Fewer than 3 open landfills, or the nearest is over 100 mi from a large solar fleet
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {wasteDeserts.map((d) => (
+              <div key={d.state} className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">{d.state}</span>
+                  <Badge variant="outline" className="text-[10px]">
+                    {d.landfillCount} open
+                  </Badge>
+                </div>
+                <p className="font-mono text-[10px] text-muted-foreground mt-0.5">
+                  {d.landfillsPerGw}/GW · {Math.round(d.solarMw).toLocaleString()} MW
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -4,11 +4,11 @@ import type { Landfill } from "@/types/landfill";
 import { ClusteredMarkers } from "@/components/ClusteredMarkers";
 import "leaflet/dist/leaflet.css";
 
-const statusColor = (status: string) => {
-  if (status === "Yes") return "#22c55e";
-  if (status === "No") return "#ef4444";
-  if (status === "Conditional") return "#eab308";
-  return "#64748b";
+/** Colour by EPA LMOP operational status (a real reported field). */
+const statusColor = (status?: string) => {
+  if (status === "Open") return "hsl(152 40% 52%)";
+  if (status === "Closed") return "hsl(150 8% 45%)";
+  return "hsl(38 92% 50%)";
 };
 
 interface MiniMapProps {
@@ -22,7 +22,7 @@ export function MiniMap({ landfills }: MiniMapProps) {
         id: lf.id,
         lat: lf.lat,
         lng: lf.lng,
-        color: statusColor(lf.acceptsPV),
+        color: statusColor(lf.operationalStatus),
         radius: 4,
         fillOpacity: 0.6,
         weight: 1,
