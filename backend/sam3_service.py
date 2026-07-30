@@ -52,14 +52,18 @@ _dtype: Any = None
 
 
 def _get_device() -> str:
-    # Choose where Torch runs inference.
-    
-    # Priority:
-    # - CUDA if available (NVIDIA GPU)
-    # - MPS if available (Apple Silicon GPU)
-    # - CPU fallback (always works, slower)
+    # Choose where Torch runs inference. SAM3_DEVICE=cpu|cuda|mps forces a choice;
+    # unset (default) keeps auto-detection: CUDA, then MPS, then CPU fallback.
+    raw = (os.environ.get("SAM3_DEVICE") or "auto").strip().lower()
     try:
         import torch
+        if raw == "cpu":
+            return "cpu"
+        if raw == "cuda":
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        if raw == "mps":
+            return "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"
+        # auto (default)
         if torch.cuda.is_available():
             return "cuda"
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -175,105 +179,6 @@ def _nms(
     return keep
 
 
-def _overlap_ratio(box_a: dict, box_b: dict) -> float:
-    # Intersection over box_a area (how much of A is covered by B).
-    ix1 = max(box_a["xmin"], box_b["xmin"])
-    iy1 = max(box_a["ymin"], box_b["ymin"])
-    ix2 = min(box_a["xmax"], box_b["xmax"])
-    iy2 = min(box_a["ymax"], box_b["ymax"])
-    if ix2 <= ix1 or iy2 <= iy1:
-        return 0.0
-    inter = (ix2 - ix1) * (iy2 - iy1)
-    area_a = (box_a["xmax"] - box_a["xmin"]) * (box_a["ymax"] - box_a["ymin"])
-    return inter / area_a if area_a > 0 else 0.0
-
-
-def _filter_person_building_overlap(detections: list[dict], img_w: int, img_h: int) -> list[dict]:
-    # Filter out common street-view false positives where the model mistakes part of a facade
-    # for a "person" concept.
-    
-    # We keep "person" detections only if:
-    # - their bbox area is not unrealistically large
-    # - they are not almost entirely contained inside a detected building bbox
-    buildings = [d for d in detections if d["label"] == "building"]
-    persons = [d for d in detections if d["label"] == "person"]
-    others = [d for d in detections if d["label"] not in ("building", "person")]
-
-    img_area = img_w * img_h
-    filtered_persons: list[dict] = []
-    for p in persons:
-        p_area = (p["bbox"]["xmax"] - p["bbox"]["xmin"]) * (p["bbox"]["ymax"] - p["bbox"]["ymin"])
-        # Remove if person bbox is unrealistically large (>18% of image - likely misdetected building)
-        if p_area > 0.18 * img_area:
-            continue
-        # Only remove if person is almost entirely inside a building (>70% overlap = likely false positive)
-        overlap_any = any(_overlap_ratio(p["bbox"], b["bbox"]) > 0.70 for b in buildings)
-        if overlap_any:
-            continue
-        filtered_persons.append(p)
-
-    return buildings + filtered_persons + others
-
-
-def _filter_google_map_signs(detections: list[dict]) -> list[dict]:
-    # Remove sign detections that come from Street View navigation UI overlays.
-    
-    # Those arrow graphics often lie on road/pavement tiles; if a detected "sign" bbox
-    # overlaps a road bbox beyond a threshold, we drop it.
-    roads = [d for d in detections if d["label"] == "road"]
-    signs = [d for d in detections if d["label"] == "sign"]
-    others = [d for d in detections if d["label"] not in ("sign", "road")]
-
-    filtered_signs: list[dict] = []
-    for s in signs:
-        # Skip signs on road surface - Google nav arrows are overlaid on pavement
-        if any(_overlap_ratio(s["bbox"], r["bbox"]) > 0.25 for r in roads):
-            continue
-        filtered_signs.append(s)
-
-    return roads + filtered_signs + others
-
-
-def _filter_sign_pole_on_building(detections: list[dict]) -> list[dict]:
-    # Filter sign/pole detections that are likely false positives caused by overlaps
-    # with building edges.
-    
-    # If a sign/pole bbox overlaps building bboxes too much, we discard it.
-    buildings = [d for d in detections if d["label"] == "building"]
-    signs = [d for d in detections if d["label"] == "sign"]
-    poles = [d for d in detections if d["label"] == "pole"]
-    others = [d for d in detections if d["label"] not in ("sign", "pole", "building")]
-
-    def keep_det(d: dict) -> bool:
-        return not any(_overlap_ratio(d["bbox"], b["bbox"]) > 0.35 for b in buildings)
-
-    filtered_signs = [s for s in signs if keep_det(s)]
-    filtered_poles = [p for p in poles if keep_det(p)]
-
-    return others + buildings + filtered_signs + filtered_poles
-
-
-def _filter_car_doors(detections: list[dict]) -> list[dict]:
-    # Remove door-like detections that overlap vehicles.
-    
-    # Street view imagery often contains cars/trucks parked near the facade. The model can
-    # incorrectly segment vehicle doors/shapes using the same prompt vocabulary as building
-    # entrances. Since this app is focused on building entrance areas, we drop those
-    # door detections when they significantly overlap a detected vehicle bbox.
-    vehicles = [d for d in detections if d["label"] in ("car", "truck")]
-    doors = [d for d in detections if d["label"] == "door"]
-    others = [d for d in detections if d["label"] not in ("door", "car", "truck")]
-
-    filtered_doors: list[dict] = []
-    for door in doors:
-        # Skip doors that overlap significantly with a vehicle (car doors)
-        if any(_overlap_ratio(door["bbox"], v["bbox"]) > 0.4 for v in vehicles):
-            continue
-        filtered_doors.append(door)
-
-    return others + vehicles + filtered_doors
-
-
 _SOLAR_PANEL_LABELS = {
     "solar panel",
     "photovoltaic array",
@@ -281,96 +186,11 @@ _SOLAR_PANEL_LABELS = {
 }
 
 
-def _merge_entrance_detections(detections: list[dict]) -> list[dict]:
-    # Merge multiple overlapping entrance detections into a single entrance.
-    
-    # This is mainly to avoid separate boxes for each leaf of a glass double-door.
-    # We keep the highest-confidence detection and expand its bbox to cover the union.
-    entrances = [d for d in detections if d["label"] in _ENTRANCE_LABELS]
-    others = [d for d in detections if d["label"] not in _ENTRANCE_LABELS]
-
-    if not entrances:
-        return detections
-
-    # Sort by confidence so first seen is the strongest instance
-    entrances_sorted = sorted(entrances, key=lambda d: d["confidence"], reverse=True)
-    merged: list[dict] = []
-
-    for det in entrances_sorted:
-        placed = False
-        for m in merged:
-            # Use IoU to decide whether this is part of the same physical entrance
-            if _iou(det["bbox"], m["bbox"]) > 0.3:
-                b = det["bbox"]
-                mb = m["bbox"]
-                m["bbox"] = {
-                    "xmin": min(mb["xmin"], b["xmin"]),
-                    "ymin": min(mb["ymin"], b["ymin"]),
-                    "xmax": max(mb["xmax"], b["xmax"]),
-                    "ymax": max(mb["ymax"], b["ymax"]),
-                }
-                # Keep polygon of the higher-confidence detection (already m)
-                placed = True
-                break
-        if not placed:
-            merged.append(det)
-
-    # Normalize label to a single semantic class for UI consistency
-    for m in merged:
-        m["label"] = "door"
-
-    return others + merged
-
-
-def _filter_first_floor_entrances(detections: list[dict], img_h: int) -> list[dict]:
-    # Keep ground-level entrances; drop bbox centers in the top ~35% of the frame (y grows
-    # downward). A stricter rule (e.g. keep only bottom 45%) removed valid doors near the
-    # vertical middle of many Street View shots.
-    # Keep entrances whose bbox center is not in the *top* of the frame (upper floors).
-    # y grows downward; 0.55 meant "keep only bottom 45%" and removed many valid doors
-    # that sit near the vertical middle of Street View. Use ~0.35 so doors slightly
-    # above mid-frame (common Street View framing) still pass.
-    FIRST_FLOOR_MIN_CENTER_Y_RATIO = 0.35
-
-    entrances = [d for d in detections if d["label"] in _ENTRANCE_LABELS]
-    others = [d for d in detections if d["label"] not in _ENTRANCE_LABELS]
-
-    kept: list[dict] = []
-    y_min_keep = FIRST_FLOOR_MIN_CENTER_Y_RATIO * img_h
-    for e in entrances:
-        yc = (e["bbox"]["ymin"] + e["bbox"]["ymax"]) / 2.0
-        # Keep if bbox center is not in the top 35% of the image (y downward).
-        if yc >= y_min_keep:
-            kept.append(e)
-
-    return others + kept
-
-
-def _merge_sidewalk_detections(detections: list[dict], img_h: int) -> list[dict]:
-    # Keep at most 2 sidewalk detections (largest by area).
-    sidewalks = [d for d in detections if d["label"] == "sidewalk"]
-    others = [d for d in detections if d["label"] != "sidewalk"]
-
-    if len(sidewalks) <= 2:
-        return detections
-
-    def bbox_area(d: dict) -> float:
-        b = d["bbox"]
-        return (b["xmax"] - b["xmin"]) * (b["ymax"] - b["ymin"])
-
-    # Keep only the 1 largest sidewalk region
-    sorted_sw = sorted(sidewalks, key=bbox_area, reverse=True)
-    return others + sorted_sw[:1]
-
-
 # Max detections per class - keeps only highest-confidence to reduce noise
 _MAX_PER_CLASS: dict[str, int] = {
     "road": 1,
     "sidewalk": 1,
-    "building": 300,
-    "house": 300,
-    "structure": 300,
-    "building footprint": 300,
+    "solar panel": 300,
     "door": 3,
     "entrance": 8,
     "car": 5,
@@ -393,8 +213,18 @@ _MAX_PER_CLASS: dict[str, int] = {
 }
 
 
+def _env_truthy(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes")
+
+
 def _cap_per_class(detections: list[dict]) -> list[dict]:
     # Keep only top N detections per class by confidence.
+    # SAM3_MAX_SOLAR_PANELS raises the "solar panel" cap without touching other classes.
+    try:
+        solar_cap_override = int(os.environ.get("SAM3_MAX_SOLAR_PANELS", "0"))
+    except ValueError:
+        solar_cap_override = 0
+
     by_label: dict[str, list[dict]] = {}
     for d in detections:
         lbl = d["label"]
@@ -403,6 +233,8 @@ def _cap_per_class(detections: list[dict]) -> list[dict]:
     result: list[dict] = []
     for lbl, dets in by_label.items():
         cap = _MAX_PER_CLASS.get(lbl, 4)  # default 4 for unlisted
+        if lbl == "solar panel" and solar_cap_override > 0:
+            cap = solar_cap_override
         sorted_dets = sorted(dets, key=lambda x: x["confidence"], reverse=True)
         result.extend(sorted_dets[:cap])
     return result
@@ -700,16 +532,98 @@ def _run_inference_pass(
     return dets
 
 
-def _generate_tiles(w: int, h: int, tile_size: int, overlap: float = 0.25):
-    # Yield (x, y, crop_w, crop_h) tiles covering the full image with overlap.
-    step = int(tile_size * (1 - overlap))
-    for y in range(0, h, step):
-        for x in range(0, w, step):
-            cw = min(tile_size, w - x)
-            ch = min(tile_size, h - y)
-            if cw < tile_size * 0.4 or ch < tile_size * 0.4:
-                continue
-            yield x, y, cw, ch
+def _satellite_tiles_cover(w: int, h: int, tile_size: int, overlap: float) -> list[tuple[int, int, int, int]]:
+    # Axis-aligned windows of size up to tile_size with overlap; last step snaps to far edge.
+    if w <= 0 or h <= 0:
+        return []
+    ts = max(128, min(tile_size, max(w, h)))
+    if w <= ts and h <= ts:
+        return [(0, 0, w, h)]
+    step = max(1, int(ts * (1 - overlap)))
+
+    def axis_starts(total: int) -> list[int]:
+        if total <= ts:
+            return [0]
+        xs: list[int] = []
+        x = 0
+        while True:
+            xs.append(x)
+            if x + ts >= total:
+                break
+            x = min(x + step, total - ts)
+        return list(dict.fromkeys(xs))
+
+    x_starts = axis_starts(w)
+    y_starts = axis_starts(h)
+    tiles: list[tuple[int, int, int, int]] = []
+    for y in y_starts:
+        for x in x_starts:
+            cw = min(ts, w - x)
+            ch = min(ts, h - y)
+            tiles.append((x, y, cw, ch))
+    return tiles
+
+
+def _collect_satellite_detections(
+    image: Image.Image,
+    w: int,
+    h: int,
+    prompts: list[str],
+    confidence_threshold: float,
+    mask_threshold: float,
+    max_dim: int,
+) -> list[dict]:
+    # Single downscaled pass, or optional multi-tile inference at ~max_dim per tile
+    # (SAM3_SAT_TILING=1) — small/dense solar arrays benefit from tile overlap recall.
+    use_tiles = _env_truthy("SAM3_SAT_TILING")
+    if not use_tiles or max(w, h) <= max_dim:
+        infer_image = image
+        sx, sy = 1.0, 1.0
+        iw, ih = w, h
+        if max(iw, ih) > max_dim:
+            ratio = max_dim / max(iw, ih)
+            iw, ih = int(iw * ratio), int(ih * ratio)
+            infer_image = image.resize((iw, ih), Image.Resampling.LANCZOS)
+            sx, sy = w / iw, h / ih
+        logger.info("Satellite: single pass %dx%d (max_dim=%d)", iw, ih, max_dim)
+        return _run_inference_pass(
+            infer_image, prompts, iw, ih,
+            confidence_threshold, mask_threshold, "satellite",
+            scale_x=sx, scale_y=sy,
+        )
+
+    try:
+        ov = float((os.environ.get("SAM3_SAT_TILE_OVERLAP") or "0.22").strip())
+    except ValueError:
+        ov = 0.22
+    ov = max(0.08, min(0.45, ov))
+    tile_specs = _satellite_tiles_cover(w, h, max_dim, ov)
+    logger.info(
+        "Satellite: tiled inference %d tiles max_dim=%d overlap=%.2f",
+        len(tile_specs), max_dim, ov,
+    )
+    acc: list[dict] = []
+    for x0, y0, cw, ch in tile_specs:
+        crop = image.crop((x0, y0, x0 + cw, y0 + ch))
+        iw, ih = crop.size
+        infer_im = crop
+        sx, sy = 1.0, 1.0
+        if max(iw, ih) > max_dim:
+            ratio = max_dim / max(iw, ih)
+            ni, nj = max(1, int(iw * ratio)), max(1, int(ih * ratio))
+            infer_im = crop.resize((ni, nj), Image.Resampling.LANCZOS)
+            sx, sy = cw / ni, ch / nj
+        else:
+            ni, nj = iw, ih
+        acc.extend(
+            _run_inference_pass(
+                infer_im, prompts, ni, nj,
+                confidence_threshold, mask_threshold, "satellite",
+                offset_x=float(x0), offset_y=float(y0),
+                scale_x=sx, scale_y=sy,
+            )
+        )
+    return acc
 
 
 def run_detection(image_bytes: bytes, mode: str = "streetview") -> dict:
@@ -730,26 +644,29 @@ def run_detection(image_bytes: bytes, mode: str = "streetview") -> dict:
     all_dets: list[dict] = []
 
     if mode == "satellite":
-        # Balance recall vs speed: single high-res pass so scans stay under ~5–10s.
-        confidence_threshold = 0.22
-        mask_threshold = 0.45
+        # Env-tunable thresholds (SAM3_SAT_* clamped to sane ranges) instead of
+        # hardcoded values, so recall/precision can be tuned per deployment without
+        # a code change. Defaults chosen close to prior hardcoded behavior.
+        try:
+            confidence_threshold = float((os.environ.get("SAM3_SAT_CONF") or "0.20").strip())
+        except ValueError:
+            confidence_threshold = 0.20
+        confidence_threshold = max(0.12, min(0.45, confidence_threshold))
 
-        max_dim = 1300
-        infer_image = image
-        sx, sy = 1.0, 1.0
-        if max(w, h) > max_dim:
-            ratio = max_dim / max(w, h)
-            iw, ih = int(w * ratio), int(h * ratio)
-            infer_image = image.resize((iw, ih), Image.Resampling.LANCZOS)
-            sx, sy = w / iw, h / ih
-        else:
-            iw, ih = w, h
+        try:
+            mask_threshold = float((os.environ.get("SAM3_SAT_MASK_THRESHOLD") or "0.42").strip())
+        except ValueError:
+            mask_threshold = 0.42
+        mask_threshold = max(0.25, min(0.65, mask_threshold))
 
-        logger.info(f"Satellite: single pass {iw}x{ih}")
-        all_dets = _run_inference_pass(
-            infer_image, prompts, iw, ih,
-            confidence_threshold, mask_threshold, mode,
-            scale_x=sx, scale_y=sy,
+        try:
+            max_dim = int((os.environ.get("SAM3_SAT_MAX_DIM") or "768").strip())
+        except ValueError:
+            max_dim = 768
+        max_dim = max(480, min(1024, max_dim))
+
+        all_dets = _collect_satellite_detections(
+            image, w, h, prompts, confidence_threshold, mask_threshold, max_dim
         )
 
         # Merge labels to "solar panel"
@@ -757,16 +674,19 @@ def run_detection(image_bytes: bytes, mode: str = "streetview") -> dict:
             if d["label"] != "solar panel":
                 d["label"] = "solar panel"
 
-        # Remove extremely oversized detections (>12% of image).
+        # Drop only near-full-frame false positives.
+        try:
+            max_bbox_frac = float((os.environ.get("SAM3_SAT_MAX_BBOX_FRACTION") or "0.62").strip())
+        except ValueError:
+            max_bbox_frac = 0.62
+        max_bbox_frac = max(0.18, min(0.92, max_bbox_frac))
         img_area = w * h
         all_dets = [
             d for d in all_dets
             if (d["bbox"]["xmax"] - d["bbox"]["xmin"])
             * (d["bbox"]["ymax"] - d["bbox"]["ymin"])
-            < 0.12 * img_area
+            <= max_bbox_frac * img_area
         ]
-        # Slightly looser NMS than the original to keep dense blocks, but faster
-        # than the multi-pass tiled version.
         all_dets = _nms(all_dets, iou_threshold=0.6)
 
     else:

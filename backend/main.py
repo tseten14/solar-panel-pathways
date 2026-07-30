@@ -1,11 +1,17 @@
 # FastAPI backend for scene detection: SAM 3 and YOLO (World + COCO fallback; compare via ?engine=sam3|yolo).
 # Exposes /detect for uploaded images and /streetview for fetching street view imagery.
 import logging
+from pathlib import Path
 
 import httpx
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+
+# Load repo-root .env (gitignored) so OPENAI_API_KEY etc. reach the process in
+# local dev without requiring manual `export`. No-op if the file doesn't exist.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from config import cache_refresh_secret, cors_origins, google_maps_api_key, max_upload_bytes
 from data_cache import (
@@ -17,6 +23,7 @@ from data_cache import (
     refresh_solar_stats,
 )
 from sam3_service import is_sam3_loaded, load_sam3, run_detection
+from solar_scan_api import router as solar_scan_router
 from yolo_service import is_yolo_loaded, load_yolo, run_yolo_detection
 
 logger = logging.getLogger("uvicorn.error")
@@ -26,6 +33,7 @@ app = FastAPI(
     title="CV-SCAN-GEOAI Detection API",
     description="Scene detection via SAM 3 or YOLO (YOLO-World when local weights exist, else YOLOv8 COCO)",
 )
+app.include_router(solar_scan_router)
 
 
 @app.on_event("startup")

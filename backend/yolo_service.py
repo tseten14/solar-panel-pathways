@@ -29,11 +29,9 @@ STREETVIEW_CLASSES = [
 ]
 
 SATELLITE_CLASSES = [
-    "building",
-    "roof",
-    "house",
-    "structure",
-    "building footprint",
+    "solar panel",
+    "photovoltaic array",
+    "solar array",
 ]
 
 _ENTRANCE_LABELS = frozenset(
@@ -626,7 +624,7 @@ def run_yolo_detection(image_bytes: bytes, mode: str = "streetview") -> dict:
 
     if mode == "satellite":
         for d in dets:
-            d["label"] = "building"
+            d["label"] = "solar panel"
         img_area = w * h
         dets = [
             d

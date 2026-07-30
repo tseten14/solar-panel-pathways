@@ -15,5 +15,9 @@ dist/
 # Backend API cache (refreshed from EPA/USGS)
 backend/data/cache/*.json
 
+# Solar scan review-queue database (local dev state, not source)
+backend/data/*.db
+backend/data/*.db-*
+
 # OS
 .DS_Store
