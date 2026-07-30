@@ -23,6 +23,7 @@ from data_cache import (
     refresh_solar_stats,
 )
 from sam3_service import is_sam3_loaded, load_sam3, run_detection
+from solar_ai import router as solar_ai_router
 from solar_scan_api import router as solar_scan_router
 from yolo_service import is_yolo_loaded, load_yolo, run_yolo_detection
 
@@ -34,6 +35,7 @@ app = FastAPI(
     description="Scene detection via SAM 3 or YOLO (YOLO-World when local weights exist, else YOLOv8 COCO)",
 )
 app.include_router(solar_scan_router)
+app.include_router(solar_ai_router)
 
 
 @app.on_event("startup")
