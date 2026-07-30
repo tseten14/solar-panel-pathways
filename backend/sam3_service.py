@@ -221,6 +221,15 @@ def _env_truthy(name: str) -> bool:
     return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes")
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    # Like _env_truthy but honours a default when the var is unset, so a feature
+    # can ship enabled while still being switchable off (SAM3_SAT_TILING=0).
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes")
+
+
 def _cap_per_class(detections: list[dict]) -> list[dict]:
     # Keep only top N detections per class by confidence.
     # SAM3_MAX_SOLAR_PANELS raises the "solar panel" cap without touching other classes.
@@ -578,8 +587,11 @@ def _collect_satellite_detections(
     max_dim: int,
 ) -> list[dict]:
     # Single downscaled pass, or optional multi-tile inference at ~max_dim per tile
-    # (SAM3_SAT_TILING=1) — small/dense solar arrays benefit from tile overlap recall.
-    use_tiles = _env_truthy("SAM3_SAT_TILING")
+    # Tiling is ON by default: a single downscaled pass destroys the resolution solar
+    # panels need. Measured on a 1600m-wide scan (2048px Esri export): single pass at
+    # max_dim=768 sees ~2.1 m/px and found 0 arrays; tiled at 1024 sees ~0.8 m/px and
+    # found 35. Set SAM3_SAT_TILING=0 for the old fast-but-blind single pass.
+    use_tiles = _env_bool("SAM3_SAT_TILING", True)
     if not use_tiles or max(w, h) <= max_dim:
         infer_image = image
         sx, sy = 1.0, 1.0
@@ -664,7 +676,9 @@ def run_detection(image_bytes: bytes, mode: str = "streetview") -> dict:
         mask_threshold = max(0.25, min(0.65, mask_threshold))
 
         try:
-            max_dim = int((os.environ.get("SAM3_SAT_MAX_DIM") or "768").strip())
+            # 1024 beat 768 on both accuracy (35 vs 30 arrays) and wall time
+            # (55s vs 98s) — larger tiles mean fewer inference passes.
+            max_dim = int((os.environ.get("SAM3_SAT_MAX_DIM") or "1024").strip())
         except ValueError:
             max_dim = 768
         max_dim = max(480, min(1024, max_dim))
