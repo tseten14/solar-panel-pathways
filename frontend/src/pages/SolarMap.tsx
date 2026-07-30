@@ -1,12 +1,14 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
-import { MapPin, Eye, Upload, Building2, ScanSearch, Boxes, Sparkles, ExternalLink } from "lucide-react";
+import { MapPin, Eye, Upload, Building2, ScanSearch, Boxes, Sparkles, ExternalLink, LayoutGrid, ImagePlus } from "lucide-react";
 import { useLandfills } from "@/hooks/useLandfills";
 import { findNearestLandfill } from "@/lib/geo";
 import { GeoAiMark } from "@/components/GeoAiMark";
 import MapPanel from "@/components/MapPanel";
 import type { MapPanelHandle } from "@/components/MapPanel";
 import DetectionOverlay from "@/components/DetectionOverlay";
+import SolarScanMap from "@/components/SolarScanMap";
+import SolarReviewQueue from "@/components/SolarReviewQueue";
 import { runBackendDetection } from "@/lib/backendDetection";
 import { fetchBackendHealth, type BackendHealth } from "@/lib/apiHealth";
 import { runMockDetection } from "@/lib/mockDetection";
@@ -19,8 +21,18 @@ import {
   buildBuildingsGeoJSONPixels,
   downloadJsonFile,
 } from "@/lib/exportBuildingPoints";
+import {
+  scanArea,
+  fetchDetections,
+  fetchDetectionStats,
+  decideDetection,
+  decideBatch,
+  type SolarDetectionFeature,
+  type DetectionStats,
+} from "@/lib/solar-scan-api";
 
 type DetectionMode = "streetview" | "satellite";
+type PageTab = "review" | "quick";
 
 const Index = () => {
   const [selectedPin, setSelectedPin] = useState<MapPinType | null>(null);
@@ -40,6 +52,118 @@ const Index = () => {
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { data: landfills = [], isLoading: landfillsLoading } = useLandfills();
   const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
+
+  // --- Review-queue tab state (persisted scan/confirm/reject workflow) ---
+  const [pageTab, setPageTab] = useState<PageTab>("review");
+  const [reviewDetections, setReviewDetections] = useState<SolarDetectionFeature[]>([]);
+  const [reviewStats, setReviewStats] = useState<DetectionStats | null>(null);
+  const [reviewSelectedId, setReviewSelectedId] = useState<number | null>(null);
+  const [reviewFlyTrigger, setReviewFlyTrigger] = useState(0);
+  const [scanCenter, setScanCenter] = useState<[number, number] | null>(null);
+  const [scanRadiusM, setScanRadiusM] = useState(200);
+  const [reviewEngine, setReviewEngine] = useState<DetectionEngineId>("sam3");
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewStatus, setReviewStatus] = useState("");
+
+  const refreshReviewData = useCallback(async () => {
+    try {
+      const [detRes, statsRes] = await Promise.all([fetchDetections(), fetchDetectionStats()]);
+      setReviewDetections(detRes.features);
+      setReviewStats(statsRes);
+    } catch (err) {
+      console.error("Failed to refresh review data:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (pageTab === "review") refreshReviewData();
+  }, [pageTab, refreshReviewData]);
+
+  const pendingDetections = useMemo(
+    () => reviewDetections.filter((d) => d.properties.status === "pending"),
+    [reviewDetections],
+  );
+
+  const handleReviewMapClick = useCallback((lat: number, lng: number) => {
+    setScanCenter([lat, lng]);
+  }, []);
+
+  const handleReviewSelect = useCallback((id: number) => {
+    setReviewSelectedId(id);
+    setReviewFlyTrigger((t) => t + 1);
+  }, []);
+
+  const handleScanArea = useCallback(async () => {
+    if (!scanCenter || reviewBusy) return;
+    setReviewBusy(true);
+    setReviewStatus("Scanning...");
+    try {
+      const [lat, lng] = scanCenter;
+      const dLat = scanRadiusM / 111_320;
+      const dLng = scanRadiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
+      const bbox: [number, number, number, number] = [lng - dLng, lat - dLat, lng + dLng, lat + dLat];
+      const result = await scanArea(bbox, reviewEngine, { center: scanCenter, radius_m: scanRadiusM });
+      setReviewStatus(
+        `Scan complete: ${result.stored.pending} new, ${result.stored.skipped} skipped.`,
+      );
+      await refreshReviewData();
+    } catch (err) {
+      console.error("Scan failed:", err);
+      setReviewStatus(err instanceof Error ? err.message : "Scan failed");
+    } finally {
+      setReviewBusy(false);
+      setTimeout(() => setReviewStatus(""), 4000);
+    }
+  }, [scanCenter, scanRadiusM, reviewEngine, reviewBusy, refreshReviewData]);
+
+  const handleConfirmDetection = useCallback(
+    async (id: number) => {
+      try {
+        await decideDetection(id, "confirm");
+        await refreshReviewData();
+      } catch (err) {
+        console.error("Confirm failed:", err);
+      }
+    },
+    [refreshReviewData],
+  );
+
+  const handleRejectDetection = useCallback(
+    async (id: number) => {
+      try {
+        await decideDetection(id, "reject");
+        await refreshReviewData();
+      } catch (err) {
+        console.error("Reject failed:", err);
+      }
+    },
+    [refreshReviewData],
+  );
+
+  const handleRestoreDetection = useCallback(
+    async (id: number) => {
+      try {
+        await decideDetection(id, "restore");
+        await refreshReviewData();
+      } catch (err) {
+        console.error("Restore failed:", err);
+      }
+    },
+    [refreshReviewData],
+  );
+
+  const handleAcceptAll = useCallback(async () => {
+    if (pendingDetections.length === 0) return;
+    setReviewBusy(true);
+    try {
+      await decideBatch(pendingDetections.map((d) => d.properties.id), "confirmed");
+      await refreshReviewData();
+    } catch (err) {
+      console.error("Accept all failed:", err);
+    } finally {
+      setReviewBusy(false);
+    }
+  }, [pendingDetections, refreshReviewData]);
 
   const sam3Available = backendHealth?.sam3_loaded ?? false;
   const yoloAvailable = backendHealth?.yolo_available ?? false;
@@ -417,7 +541,7 @@ const Index = () => {
             active={!!detectionResult}
           />
           <div className="ml-2 hidden rounded-md border border-border/60 bg-background/30 px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted-foreground sm:block">
-            {detectionMode === "satellite" ? "Building detection" : "Solar Panel detection"}
+            Solar panel detection
           </div>
         </div>
       </header>
@@ -429,7 +553,115 @@ const Index = () => {
         streetviewAvailable={streetviewAvailable}
       />
 
-      {/* Split panes */}
+      {/* Tab switcher: persisted review-queue workflow vs. single-shot Quick Scan */}
+      <div className="relative z-20 flex shrink-0 items-center gap-2 border-b border-border/70 bg-card/50 px-6 py-2">
+        <button
+          type="button"
+          onClick={() => setPageTab("review")}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-[11px] tracking-wide transition-colors ${
+            pageTab === "review"
+              ? "bg-primary/20 text-primary"
+              : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
+          }`}
+        >
+          <LayoutGrid className="h-3.5 w-3.5" /> Review Queue
+        </button>
+        <button
+          type="button"
+          onClick={() => setPageTab("quick")}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-[11px] tracking-wide transition-colors ${
+            pageTab === "quick"
+              ? "bg-primary/20 text-primary"
+              : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
+          }`}
+        >
+          <ImagePlus className="h-3.5 w-3.5" /> Quick Scan
+        </button>
+      </div>
+
+      {pageTab === "review" && (
+        <div className="relative z-20 flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          <div className="min-w-0 flex-1 shrink-0 overflow-hidden border-r border-border/70 bg-card/20">
+            <div className="flex h-full w-full flex-col gap-2 p-3">
+              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card/70 px-3 py-2 backdrop-blur-md">
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {scanCenter ? `Center: ${scanCenter[0].toFixed(4)}, ${scanCenter[1].toFixed(4)}` : "Click the map to place a scan square"}
+                </span>
+                <div className="ml-auto flex items-center gap-2">
+                  <label className="font-mono text-[10px] text-muted-foreground">
+                    Radius {scanRadiusM}m
+                  </label>
+                  <input
+                    type="range"
+                    min={50}
+                    max={800}
+                    step={25}
+                    value={scanRadiusM}
+                    onChange={(e) => setScanRadiusM(Number(e.target.value))}
+                    className="w-24"
+                  />
+                  <div className="flex overflow-hidden rounded-lg border border-border/70">
+                    <button
+                      type="button"
+                      onClick={() => setReviewEngine("sam3")}
+                      className={`px-2 py-1 font-mono text-[10px] ${reviewEngine === "sam3" ? "bg-violet-500/20 text-violet-200" : "text-muted-foreground"}`}
+                    >
+                      SAM 3
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewEngine("yolo")}
+                      className={`border-l border-border/70 px-2 py-1 font-mono text-[10px] ${reviewEngine === "yolo" ? "bg-amber-500/15 text-amber-200" : "text-muted-foreground"}`}
+                    >
+                      YOLO
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleScanArea}
+                    disabled={!scanCenter || reviewBusy}
+                    className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+                  >
+                    <ScanSearch className="h-3.5 w-3.5" /> Scan
+                  </button>
+                </div>
+              </div>
+              {reviewStatus && (
+                <div className="shrink-0 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary">
+                  {reviewStatus}
+                </div>
+              )}
+              <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border/70">
+                <SolarScanMap
+                  detections={reviewDetections}
+                  selectedId={reviewSelectedId}
+                  scanCenter={scanCenter}
+                  radiusM={scanRadiusM}
+                  onMapClick={handleReviewMapClick}
+                  onSelectFeature={handleReviewSelect}
+                  flyToTrigger={reviewFlyTrigger}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="w-[340px] shrink-0 overflow-hidden bg-card/30">
+            <SolarReviewQueue
+              pending={pendingDetections}
+              stats={reviewStats}
+              selectedId={reviewSelectedId}
+              onSelect={handleReviewSelect}
+              onConfirm={handleConfirmDetection}
+              onReject={handleRejectDetection}
+              onRestore={handleRestoreDetection}
+              onAcceptAll={handleAcceptAll}
+              busy={reviewBusy}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Split panes (Quick Scan: single-shot upload/paste/scan-map, no persistence) */}
+      {pageTab === "quick" && (
       <div className="relative z-20 flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {/* Left: Map */}
         <div className="min-w-0 w-1/2 shrink-0 overflow-hidden border-r border-border/70 bg-card/20">
@@ -633,6 +865,7 @@ const Index = () => {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };
