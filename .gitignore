@@ -12,6 +12,10 @@ node_modules/
 npm-cache/
 dist/
 
+# Playwright run output
+frontend/test-results/
+frontend/playwright-report/
+
 # Backend API cache (refreshed from EPA/USGS)
 backend/data/cache/*.json
 
