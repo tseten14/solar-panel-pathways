@@ -104,7 +104,7 @@ export default function MLPredictions() {
               <TrendingUp className="h-4 w-4 text-primary" />
               <span className="stat-label">Acceptance Prob.</span>
             </div>
-            <p className="stat-value" style={{ color: prediction.acceptanceProbability > 50 ? "hsl(142 71% 45%)" : "hsl(0 72% 51%)" }}>
+            <p className="stat-value" style={{ color: prediction.acceptanceProbability > 50 ? "hsl(152 40% 52%)" : "hsl(4 72% 56%)" }}>
               {prediction.acceptanceProbability}%
             </p>
             <p className="text-xs text-muted-foreground mt-1">CI: {prediction.confidence[0]}–{prediction.confidence[1]}%</p>
@@ -144,11 +144,11 @@ export default function MLPredictions() {
           <h3 className="text-sm font-semibold text-foreground mb-4">Cost by Region ($/ton)</h3>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={costData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 20%)" />
-              <XAxis dataKey="state" stroke="hsl(215 20% 55%)" fontSize={12} />
-              <YAxis stroke="hsl(215 20% 55%)" fontSize={12} />
-              <RTooltip contentStyle={{ background: "hsl(217 33% 12%)", border: "1px solid hsl(217 33% 22%)", borderRadius: 8, color: "hsl(210 40% 92%)" }} />
-              <Bar dataKey="cost" fill="hsl(43 96% 56%)" radius={[4, 4, 0, 0]} />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(150 11% 24%)" />
+              <XAxis dataKey="state" stroke="hsl(150 8% 58%)" fontSize={12} />
+              <YAxis stroke="hsl(150 8% 58%)" fontSize={12} />
+              <RTooltip contentStyle={{ background: "hsl(150 14% 15%)", border: "1px solid hsl(150 11% 24%)", borderRadius: 8, color: "hsl(150 6% 92%)" }} />
+              <Bar dataKey="cost" fill="hsl(152 34% 44%)" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -157,11 +157,11 @@ export default function MLPredictions() {
           <h3 className="text-sm font-semibold text-foreground mb-4">Confidence Distribution — {effectiveState}</h3>
           <ResponsiveContainer width="100%" height={280}>
             <AreaChart data={confidenceData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 20%)" />
-              <XAxis dataKey="x" stroke="hsl(215 20% 55%)" fontSize={12} label={{ value: "Acceptance %", position: "insideBottom", offset: -5, style: { fill: "hsl(215 20% 55%)" } }} />
-              <YAxis stroke="hsl(215 20% 55%)" fontSize={12} />
-              <RTooltip contentStyle={{ background: "hsl(217 33% 12%)", border: "1px solid hsl(217 33% 22%)", borderRadius: 8, color: "hsl(210 40% 92%)" }} />
-              <Area type="monotone" dataKey="y" stroke="hsl(43 96% 56%)" fill="hsl(43 96% 56%)" fillOpacity={0.2} />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(150 11% 24%)" />
+              <XAxis dataKey="x" stroke="hsl(150 8% 58%)" fontSize={12} label={{ value: "Acceptance %", position: "insideBottom", offset: -5, style: { fill: "hsl(150 8% 58%)" } }} />
+              <YAxis stroke="hsl(150 8% 58%)" fontSize={12} />
+              <RTooltip contentStyle={{ background: "hsl(150 14% 15%)", border: "1px solid hsl(150 11% 24%)", borderRadius: 8, color: "hsl(150 6% 92%)" }} />
+              <Area type="monotone" dataKey="y" stroke="hsl(152 34% 44%)" fill="hsl(152 34% 44%)" fillOpacity={0.2} />
             </AreaChart>
           </ResponsiveContainer>
         </div>

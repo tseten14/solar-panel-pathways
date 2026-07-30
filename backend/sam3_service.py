@@ -95,8 +95,12 @@ def load_sam3() -> bool:
         logger.info(f"Loading SAM 3 on {_device}…")
 
         # SAM 3 is gated on Hugging Face. If you have access, provide a token
-        # via env vars so `from_pretrained()` can download weights.
-        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        # via env vars so `from_pretrained()` can download weights. `or None`
+        # matters here: a blank HF_TOKEN="" line in .env (loaded via
+        # python-dotenv) makes os.environ.get return "" rather than None, and
+        # passing token="" to from_pretrained sends a malformed empty
+        # "Authorization: Bearer " header instead of omitting auth entirely.
+        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or None
         if token:
             os.environ["HF_TOKEN"] = token
 
