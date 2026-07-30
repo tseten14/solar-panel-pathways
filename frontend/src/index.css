@@ -5,9 +5,78 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Light theme. The sidebar deliberately stays dark in both modes — the
+   * dark-rail-on-light-canvas split is the design's defining trait.
+   */
   :root {
-    /* Dark green/teal "climate-tech cockpit" palette, ported from ndc-data-explorer's
-       .dark theme (this app is dark-only, so its dark values become our :root). */
+    --background: 150 8% 98%;
+    --foreground: 150 22% 14%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 150 22% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 150 22% 14%;
+
+    /* Darker teal than the dark-mode accent so text-primary keeps contrast on white. */
+    --primary: 152 42% 30%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 150 7% 94%;
+    --secondary-foreground: 150 22% 14%;
+
+    --muted: 150 6% 93%;
+    --muted-foreground: 150 10% 40%;
+
+    --accent: 152 30% 32%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 4 72% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 150 9% 88%;
+    --input: 150 9% 88%;
+    --ring: 152 32% 36%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 150 17% 14%;
+    --sidebar-foreground: 150 6% 90%;
+    --sidebar-primary: 152 34% 44%;
+    --sidebar-primary-foreground: 150 14% 10%;
+    --sidebar-accent: 150 12% 21%;
+    --sidebar-accent-foreground: 150 6% 92%;
+    --sidebar-border: 150 12% 24%;
+    --sidebar-ring: 152 32% 38%;
+
+    --highlight: 38 95% 44%;
+    --highlight-foreground: 35 60% 14%;
+    --coral: 12 74% 48%;
+    --ocean: 202 72% 40%;
+
+    --on-track: 152 40% 32%;
+    --at-risk: 38 92% 42%;
+    --off-track: 4 72% 48%;
+    --neutral: 150 10% 44%;
+
+    --chart-1: 152 42% 32%;
+    --chart-2: 38 92% 45%;
+    --chart-3: 4 72% 50%;
+    --chart-4: 164 30% 34%;
+    --chart-5: 150 10% 55%;
+
+    --status-accept: 152 40% 32%;
+    --status-reject: 4 72% 48%;
+    --status-conditional: 38 92% 42%;
+
+    /* Surfaces used by charts and map chrome, so they follow the theme. */
+    --map-tint: 150 8% 92%;
+    --card-shadow: 150 20% 40% / 0.12;
+  }
+
+  /* Dark green/teal "climate-tech cockpit" palette. */
+  .dark {
     --background: 150 17% 11%;
     --foreground: 150 6% 92%;
 
@@ -36,18 +105,6 @@
     --input: 150 11% 24%;
     --ring: 152 32% 40%;
 
-    --radius: 0.5rem;
-
-    --sidebar-background: 150 17% 14%;
-    --sidebar-foreground: 150 6% 90%;
-    --sidebar-primary: 152 34% 44%;
-    --sidebar-primary-foreground: 150 14% 10%;
-    --sidebar-accent: 150 12% 21%;
-    --sidebar-accent-foreground: 150 6% 92%;
-    --sidebar-border: 150 12% 24%;
-    --sidebar-ring: 152 32% 38%;
-
-    /* Climate-tech accents: warm amber for highlights/CTAs, coral for alerts, ocean blue */
     --highlight: 38 92% 56%;
     --highlight-foreground: 35 60% 12%;
     --coral: 12 80% 64%;
@@ -64,10 +121,12 @@
     --chart-4: 164 26% 36%;
     --chart-5: 150 10% 68%;
 
-    /* Kept for existing accept/reject/conditional badges (MLPredictions, DataTable) */
     --status-accept: 152 40% 52%;
     --status-reject: 4 72% 56%;
     --status-conditional: 38 92% 50%;
+
+    --map-tint: 150 17% 9%;
+    --card-shadow: 0 0% 0% / 0.3;
   }
 }
 
@@ -90,7 +149,7 @@
 @layer components {
   .glass-card {
     @apply bg-card/60 backdrop-blur-xl border border-border/50 rounded-lg transition-all duration-200;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    box-shadow: 0 8px 32px hsl(var(--card-shadow));
   }
   .glass-card:hover {
     transform: translateY(-2px);
@@ -98,7 +157,7 @@
   }
   .glass-card-highlight {
     @apply glass-card;
-    box-shadow: 0 8px 32px hsl(var(--primary) / 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    box-shadow: 0 8px 32px hsl(var(--primary) / 0.16);
   }
   .stat-value {
     @apply text-3xl font-bold font-mono tracking-tight;
@@ -149,28 +208,49 @@
   }
 }
 
-/* Leaflet overrides for the dark green theme */
+/* Leaflet chrome, driven by theme tokens so it flips with light/dark */
 .leaflet-container {
-  background: hsl(150 17% 11%) !important;
+  background: hsl(var(--map-tint)) !important;
 }
 .leaflet-popup-content-wrapper {
-  background: hsl(150 14% 15%) !important;
-  color: hsl(150 6% 92%) !important;
-  border: 1px solid hsl(150 11% 24%) !important;
+  background: hsl(var(--popover)) !important;
+  color: hsl(var(--popover-foreground)) !important;
+  border: 1px solid hsl(var(--border)) !important;
   border-radius: 0.5rem !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+  box-shadow: 0 8px 32px hsl(var(--card-shadow)) !important;
 }
 .leaflet-popup-tip {
-  background: hsl(150 14% 15%) !important;
-  border: 1px solid hsl(150 11% 24%) !important;
+  background: hsl(var(--popover)) !important;
+  border: 1px solid hsl(var(--border)) !important;
 }
 .leaflet-popup-close-button {
-  color: hsl(150 8% 58%) !important;
+  color: hsl(var(--muted-foreground)) !important;
 }
 .leaflet-control-zoom a {
-  background: hsl(150 14% 15%) !important;
-  color: hsl(150 6% 92%) !important;
-  border-color: hsl(150 11% 24%) !important;
+  background: hsl(var(--card)) !important;
+  color: hsl(var(--card-foreground)) !important;
+  border-color: hsl(var(--border)) !important;
+}
+
+/*
+ * Cross-fade the whole page as one composited snapshot on theme switch —
+ * far cheaper than transitioning colours on every element.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.28s;
+  animation-timing-function: ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+  .glass-card,
+  .glass-card:hover {
+    transform: none;
+  }
 }
 
 /* Scrollbar */
@@ -178,9 +258,12 @@
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(150 17% 11%);
+  background: hsl(var(--background));
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(150 11% 28%);
+  background: hsl(var(--border));
   border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
 }

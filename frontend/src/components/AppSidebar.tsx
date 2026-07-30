@@ -29,11 +29,11 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarContent>
-        <div className={`flex items-center gap-2 px-4 py-5 border-b border-border/50 ${collapsed ? "justify-center" : ""}`}>
-          <Sun className="h-6 w-6 text-primary shrink-0" />
+        <div className={`flex items-center gap-2 px-4 py-5 border-b border-sidebar-border ${collapsed ? "justify-center" : ""}`}>
+          <Sun className="h-6 w-6 text-sidebar-primary shrink-0" />
           {!collapsed && (
-            <span className="text-lg font-bold tracking-tight text-foreground">
-              Solar<span className="text-primary">Trace</span>
+            <span className="text-lg font-bold tracking-tight text-sidebar-foreground">
+              Solar<span className="text-sidebar-primary">Trace</span>
             </span>
           )}
         </div>
@@ -47,8 +47,8 @@ export function AppSidebar() {
                     <NavLink
                       to={item.url}
                       end={item.url === "/"}
-                      className="hover:bg-sidebar-accent/50"
-                      activeClassName="bg-sidebar-accent text-primary font-medium"
+                      className="text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                      activeClassName="bg-sidebar-accent text-sidebar-primary font-medium"
                     >
                       <item.icon className="mr-2 h-4 w-4 shrink-0" />
                       {!collapsed && <span>{item.title}</span>}
@@ -61,10 +61,10 @@ export function AppSidebar() {
         </SidebarGroup>
 
         {!collapsed && (
-          <div className="mt-auto px-4 py-4 border-t border-border/50">
-            <p className="text-xs text-muted-foreground">NREL Research Tool</p>
-            <p className="text-xs text-muted-foreground">v1.1.0 — Live Data</p>
-            <p className="text-xs text-muted-foreground mt-1">EPA LMOP · USGS USPVDB</p>
+          <div className="mt-auto px-4 py-4 border-t border-sidebar-border">
+            <p className="text-xs text-sidebar-foreground/55">NREL Research Tool</p>
+            <p className="text-xs text-sidebar-foreground/55">v1.1.0 — Live Data</p>
+            <p className="text-xs text-sidebar-foreground/55 mt-1">EPA LMOP · USGS USPVDB</p>
           </div>
         )}
       </SidebarContent>

@@ -2,20 +2,19 @@ import { useMemo } from "react";
 import { MapContainer, TileLayer } from "react-leaflet";
 import type { Landfill } from "@/types/landfill";
 import { ClusteredMarkers } from "@/components/ClusteredMarkers";
+import { useThemeTokens } from "@/hooks/useThemeTokens";
 import "leaflet/dist/leaflet.css";
-
-/** Colour by EPA LMOP operational status (a real reported field). */
-const statusColor = (status?: string) => {
-  if (status === "Open") return "hsl(152 40% 52%)";
-  if (status === "Closed") return "hsl(150 8% 45%)";
-  return "hsl(38 92% 50%)";
-};
 
 interface MiniMapProps {
   landfills: Landfill[];
 }
 
 export function MiniMap({ landfills }: MiniMapProps) {
+  const { basemapUrl, status } = useThemeTokens();
+  /** Colour by EPA LMOP operational status (a real reported field). */
+  const statusColor = (s?: string) =>
+    s === "Open" ? status.open : s === "Closed" ? status.closed : status.unknown;
+
   const clusterMarkers = useMemo(
     () =>
       landfills.map((lf) => ({
@@ -27,7 +26,7 @@ export function MiniMap({ landfills }: MiniMapProps) {
         fillOpacity: 0.6,
         weight: 1,
       })),
-    [landfills],
+    [landfills, status],
   );
 
   return (
@@ -41,7 +40,7 @@ export function MiniMap({ landfills }: MiniMapProps) {
       scrollWheelZoom={false}
       doubleClickZoom={false}
     >
-      <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+      <TileLayer url={basemapUrl} />
       <ClusteredMarkers markers={clusterMarkers} radius={4} fillOpacity={0.6} weight={1} />
     </MapContainer>
   );

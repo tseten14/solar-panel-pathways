@@ -8,6 +8,7 @@ import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarStatsByState } from "@/hooks/useSolarData";
 import { computeModelledTradeRoutes } from "@/lib/trade-flows";
 import { Info } from "lucide-react";
+import { useThemeTokens } from "@/hooks/useThemeTokens";
 import "leaflet/dist/leaflet.css";
 
 const statusColor = (s: string) =>
@@ -32,6 +33,7 @@ function curvedRoute(
 export default function TradeFlows() {
   const { data: landfills = [], isLoading: landfillsLoading, isError: landfillsError, refetch } = useLandfills();
   const { data: solarStats = [], isLoading: solarLoading, isError: solarError } = useSolarStatsByState();
+  const { basemapUrl } = useThemeTokens();
 
   const routes = useMemo(
     () => computeModelledTradeRoutes(landfills, solarStats),
@@ -64,7 +66,7 @@ export default function TradeFlows() {
     <div className="flex h-[calc(100vh-3rem)] flex-col lg:flex-row">
       <div className="flex-1 min-h-[300px]">
         <MapContainer center={[39.5, -98.35]} zoom={4} className="w-full h-full" attributionControl={false}>
-          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+          <TileLayer url={basemapUrl} />
           {routes.map((r) => (
             <React.Fragment key={r.id}>
               <Polyline

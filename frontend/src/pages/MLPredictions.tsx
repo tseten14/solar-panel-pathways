@@ -18,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarCohorts, useSolarStatsByState, useSolarTechMix } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
+import { useThemeTokens } from "@/hooks/useThemeTokens";
 import { WASTE_HORIZON_YEARS, computeStateCoverage } from "@/lib/state-coverage";
 import {
   PANEL_LIFETIME_YEARS,
@@ -26,15 +27,6 @@ import {
   projectWaste,
   summariseHazard,
 } from "@/lib/pv-waste";
-
-const AXIS = "hsl(150 8% 58%)";
-const GRID = "hsl(150 11% 24%)";
-const TOOLTIP_STYLE = {
-  background: "hsl(150 14% 15%)",
-  border: "1px solid hsl(150 11% 24%)",
-  borderRadius: 8,
-  color: "hsl(150 6% 92%)",
-};
 
 /** Panel-waste tonnages span kilotonnes to megatonnes; keep the tile readable. */
 function formatTonnes(t: number) {
@@ -48,6 +40,8 @@ export default function MLPredictions() {
   const { data: solarStats = [], isLoading: solarLoading, isError: solarError } = useSolarStatsByState();
   const { data: cohorts = [], isLoading: cohortsLoading } = useSolarCohorts();
   const { data: techMix = [] } = useSolarTechMix();
+  const { chart } = useThemeTokens();
+  const { axis: AXIS, grid: GRID, series: SERIES, tooltip: TOOLTIP_STYLE } = chart;
 
   const coverage = useMemo(
     () => computeStateCoverage(landfills, solarStats, cohorts),
@@ -226,8 +220,8 @@ export default function MLPredictions() {
               <Area
                 type="monotone"
                 dataKey="retiringTonnes"
-                stroke="hsl(152 34% 44%)"
-                fill="hsl(152 34% 44%)"
+                stroke={SERIES}
+                fill={SERIES}
                 fillOpacity={0.22}
               />
             </AreaChart>
@@ -250,7 +244,7 @@ export default function MLPredictions() {
                 contentStyle={TOOLTIP_STYLE}
                 formatter={(v: number) => [`${Math.round(v).toLocaleString()} t`, `${WASTE_HORIZON_YEARS}-yr waste`]}
               />
-              <Bar dataKey="tonnes" fill="hsl(152 34% 44%)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="tonnes" fill={SERIES} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

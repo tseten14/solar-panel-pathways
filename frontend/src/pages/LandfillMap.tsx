@@ -10,16 +10,15 @@ import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarFacilitiesByState } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
+import { useThemeTokens } from "@/hooks/useThemeTokens";
 import "leaflet/dist/leaflet.css";
 
-/** Colour by EPA LMOP operational status (a real reported field). */
-const statusColor = (s?: string) => {
-  if (s === "Open") return "hsl(152 40% 52%)";
-  if (s === "Closed") return "hsl(150 8% 45%)";
-  return "hsl(38 92% 50%)";
-};
-
 export default function LandfillMap() {
+  const { basemapUrl, status } = useThemeTokens();
+  /** Colour by EPA LMOP operational status (a real reported field). */
+  const statusColor = (s?: string) =>
+    s === "Open" ? status.open : s === "Closed" ? status.closed : status.unknown;
+
   const { data: landfills = [], isLoading, isError, refetch } = useLandfills();
   const [stateFilter, setStateFilter] = useState("all");
   const [ownershipFilter, setOwnershipFilter] = useState("all");
@@ -56,7 +55,7 @@ export default function LandfillMap() {
         color: statusColor(lf.operationalStatus),
         onClick: () => setSelectedLandfillId(lf.id),
       })),
-    [filtered],
+    [filtered, status],
   );
 
   if (isLoading) {
@@ -177,7 +176,7 @@ export default function LandfillMap() {
 
       <div className="flex-1">
         <MapContainer center={[39.5, -98.35]} zoom={5} className="w-full h-full" attributionControl={false}>
-          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+          <TileLayer url={basemapUrl} />
           <ClusteredMarkers markers={clusterMarkers} />
           {showSolar &&
             solarFacilities.map((sf) => (
