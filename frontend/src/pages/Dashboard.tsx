@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Building2, MapPin, Sun, ArrowRightLeft } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
 import { MiniMap } from "@/components/MiniMap";
@@ -9,6 +9,9 @@ import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState"
 import { Badge } from "@/components/ui/badge";
 import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
 import { computeModelledTradeRoutes } from "@/lib/trade-flows";
+import SolarAiPanel from "@/components/dashboard/SolarAiPanel";
+import { buildSolarAiContext } from "@/lib/solar-ai-context";
+import { fetchDetectionStats, type DetectionStats } from "@/lib/solar-scan-api";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -25,6 +28,16 @@ export default function Dashboard() {
   const modelledRoutes = useMemo(
     () => computeModelledTradeRoutes(landfills, solarStats),
     [landfills, solarStats],
+  );
+
+  const [detectionStats, setDetectionStats] = useState<DetectionStats | null>(null);
+  useEffect(() => {
+    fetchDetectionStats().then(setDetectionStats).catch(() => setDetectionStats(null));
+  }, []);
+
+  const solarAiContext = useMemo(
+    () => buildSolarAiContext(landfills, solarStats, modelledRoutes, detectionStats),
+    [landfills, solarStats, modelledRoutes, detectionStats],
   );
 
   const filters = [
@@ -63,6 +76,7 @@ export default function Dashboard() {
           <Badge variant="outline" className="text-xs">EPA LMOP</Badge>
           <Badge variant="outline" className="text-xs">USGS USPVDB</Badge>
           <DataFreshnessBadge />
+          <SolarAiPanel factLedger={solarAiContext.fact_ledger} />
         </div>
       </div>
 
