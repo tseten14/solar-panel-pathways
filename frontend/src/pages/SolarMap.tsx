@@ -1,26 +1,10 @@
-import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { Link } from "react-router-dom";
-import { MapPin, Eye, Upload, Building2, ScanSearch, Boxes, Sparkles, ExternalLink, LayoutGrid, ImagePlus } from "lucide-react";
-import { useLandfills } from "@/hooks/useLandfills";
-import { findNearestLandfill } from "@/lib/geo";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import { MapPin, Eye, ScanSearch } from "lucide-react";
 import { GeoAiMark } from "@/components/GeoAiMark";
-import MapPanel from "@/components/MapPanel";
-import type { MapPanelHandle } from "@/components/MapPanel";
-import DetectionOverlay from "@/components/DetectionOverlay";
 import SolarScanMap from "@/components/SolarScanMap";
 import SolarReviewQueue from "@/components/SolarReviewQueue";
-import { runBackendDetection } from "@/lib/backendDetection";
 import { fetchBackendHealth, type BackendHealth } from "@/lib/apiHealth";
-import { runMockDetection } from "@/lib/mockDetection";
-import type { MapPin as MapPinType, DetectionResult, DetectionEngineId } from "@/types/detection";
-import type { MapScanBounds } from "@/lib/satelliteScanMarkers";
-import { mergedBuildingCentersToMapPoints } from "@/lib/satelliteScanMarkers";
-import { mergeSatelliteDetectionsOnePerBuilding } from "@/lib/satelliteBuildingDedupe";
-import {
-  buildBuildingsGeoJSON,
-  buildBuildingsGeoJSONPixels,
-  downloadJsonFile,
-} from "@/lib/exportBuildingPoints";
+import type { DetectionEngineId } from "@/types/detection";
 import {
   scanArea,
   fetchDetections,
@@ -31,488 +15,130 @@ import {
   type DetectionStats,
 } from "@/lib/solar-scan-api";
 
-type DetectionMode = "streetview" | "satellite";
-type PageTab = "review" | "quick";
-
 const Index = () => {
-  const [selectedPin, setSelectedPin] = useState<MapPinType | null>(null);
-  const [buildingMapMarkers, setBuildingMapMarkers] = useState<Array<{ lat: number; lng: number }>>(
-    [],
-  );
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [detectionResult, setDetectionResult] = useState<DetectionResult | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string>("");
-  const [detectionMode, setDetectionMode] = useState<DetectionMode>("streetview");
-  const [detectionEngine, setDetectionEngine] = useState<DetectionEngineId>("sam3");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const mapPanelRef = useRef<MapPanelHandle>(null);
-  /** Seconds remaining for long-running work; 0 = show "OOPS!"; null = idle */
-  const [scanCountdown, setScanCountdown] = useState<number | null>(null);
-  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { data: landfills = [], isLoading: landfillsLoading } = useLandfills();
   const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
+  const sam3Available = backendHealth?.sam3_loaded ?? false;
+  const yoloAvailable = backendHealth?.yolo_available ?? false;
 
-  // --- Review-queue tab state (persisted scan/confirm/reject workflow) ---
-  const [pageTab, setPageTab] = useState<PageTab>("review");
-  const [reviewDetections, setReviewDetections] = useState<SolarDetectionFeature[]>([]);
-  const [reviewStats, setReviewStats] = useState<DetectionStats | null>(null);
-  const [reviewSelectedId, setReviewSelectedId] = useState<number | null>(null);
-  const [reviewFlyTrigger, setReviewFlyTrigger] = useState(0);
+  const [detections, setDetections] = useState<SolarDetectionFeature[]>([]);
+  const [stats, setStats] = useState<DetectionStats | null>(null);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [flyTrigger, setFlyTrigger] = useState(0);
   const [scanCenter, setScanCenter] = useState<[number, number] | null>(null);
-  const [scanRadiusM, setScanRadiusM] = useState(200);
-  const [reviewEngine, setReviewEngine] = useState<DetectionEngineId>("sam3");
-  const [reviewBusy, setReviewBusy] = useState(false);
-  const [reviewStatus, setReviewStatus] = useState("");
+  const [radiusM, setRadiusM] = useState(200);
+  const [engine, setEngine] = useState<DetectionEngineId>("sam3");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
 
-  const refreshReviewData = useCallback(async () => {
+  const refreshData = useCallback(async () => {
     try {
       const [detRes, statsRes] = await Promise.all([fetchDetections(), fetchDetectionStats()]);
-      setReviewDetections(detRes.features);
-      setReviewStats(statsRes);
+      setDetections(detRes.features);
+      setStats(statsRes);
     } catch (err) {
       console.error("Failed to refresh review data:", err);
     }
   }, []);
 
   useEffect(() => {
-    if (pageTab === "review") refreshReviewData();
-  }, [pageTab, refreshReviewData]);
-
-  const pendingDetections = useMemo(
-    () => reviewDetections.filter((d) => d.properties.status === "pending"),
-    [reviewDetections],
-  );
-
-  const handleReviewMapClick = useCallback((lat: number, lng: number) => {
-    setScanCenter([lat, lng]);
-  }, []);
-
-  const handleReviewSelect = useCallback((id: number) => {
-    setReviewSelectedId(id);
-    setReviewFlyTrigger((t) => t + 1);
-  }, []);
-
-  const handleScanArea = useCallback(async () => {
-    if (!scanCenter || reviewBusy) return;
-    setReviewBusy(true);
-    setReviewStatus("Scanning...");
-    try {
-      const [lat, lng] = scanCenter;
-      const dLat = scanRadiusM / 111_320;
-      const dLng = scanRadiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
-      const bbox: [number, number, number, number] = [lng - dLng, lat - dLat, lng + dLng, lat + dLat];
-      const result = await scanArea(bbox, reviewEngine, { center: scanCenter, radius_m: scanRadiusM });
-      setReviewStatus(
-        `Scan complete: ${result.stored.pending} new, ${result.stored.skipped} skipped.`,
-      );
-      await refreshReviewData();
-    } catch (err) {
-      console.error("Scan failed:", err);
-      setReviewStatus(err instanceof Error ? err.message : "Scan failed");
-    } finally {
-      setReviewBusy(false);
-      setTimeout(() => setReviewStatus(""), 4000);
-    }
-  }, [scanCenter, scanRadiusM, reviewEngine, reviewBusy, refreshReviewData]);
-
-  const handleConfirmDetection = useCallback(
-    async (id: number) => {
-      try {
-        await decideDetection(id, "confirm");
-        await refreshReviewData();
-      } catch (err) {
-        console.error("Confirm failed:", err);
-      }
-    },
-    [refreshReviewData],
-  );
-
-  const handleRejectDetection = useCallback(
-    async (id: number) => {
-      try {
-        await decideDetection(id, "reject");
-        await refreshReviewData();
-      } catch (err) {
-        console.error("Reject failed:", err);
-      }
-    },
-    [refreshReviewData],
-  );
-
-  const handleRestoreDetection = useCallback(
-    async (id: number) => {
-      try {
-        await decideDetection(id, "restore");
-        await refreshReviewData();
-      } catch (err) {
-        console.error("Restore failed:", err);
-      }
-    },
-    [refreshReviewData],
-  );
-
-  const handleAcceptAll = useCallback(async () => {
-    if (pendingDetections.length === 0) return;
-    setReviewBusy(true);
-    try {
-      await decideBatch(pendingDetections.map((d) => d.properties.id), "confirmed");
-      await refreshReviewData();
-    } catch (err) {
-      console.error("Accept all failed:", err);
-    } finally {
-      setReviewBusy(false);
-    }
-  }, [pendingDetections, refreshReviewData]);
-
-  const sam3Available = backendHealth?.sam3_loaded ?? false;
-  const yoloAvailable = backendHealth?.yolo_available ?? false;
-  const streetviewAvailable = backendHealth?.streetview_configured ?? false;
-
-  const referenceCoords = useMemo(() => {
-    if (
-      selectedPin &&
-      Number.isFinite(selectedPin.lat) &&
-      Number.isFinite(selectedPin.lng)
-    ) {
-      return { lat: selectedPin.lat, lng: selectedPin.lng };
-    }
-    if (buildingMapMarkers.length > 0) {
-      const valid = buildingMapMarkers.filter(
-        (m) => Number.isFinite(m.lat) && Number.isFinite(m.lng),
-      );
-      if (valid.length === 0) return null;
-      return {
-        lat: valid.reduce((sum, m) => sum + m.lat, 0) / valid.length,
-        lng: valid.reduce((sum, m) => sum + m.lng, 0) / valid.length,
-      };
-    }
-    return null;
-  }, [selectedPin, buildingMapMarkers]);
-
-  const nearestDisposalSite = useMemo(() => {
-    if (!referenceCoords) return null;
-    return findNearestLandfill(referenceCoords.lat, referenceCoords.lng, landfills);
-  }, [referenceCoords, landfills]);
-
-  const showNearestDisposalCard = !!selectedPin || buildingMapMarkers.length > 0;
-
-  useLayoutEffect(() => {
-    if (!isProcessing) {
-      if (countdownIntervalRef.current) {
-        clearInterval(countdownIntervalRef.current);
-        countdownIntervalRef.current = null;
-      }
-      setScanCountdown(null);
-      return;
-    }
-    setScanCountdown(20);
-    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-    countdownIntervalRef.current = setInterval(() => {
-      setScanCountdown((c) => {
-        if (c === null || c <= 0) return 0;
-        return c - 1;
-      });
-    }, 1000);
-    return () => {
-      if (countdownIntervalRef.current) {
-        clearInterval(countdownIntervalRef.current);
-        countdownIntervalRef.current = null;
-      }
-    };
-  }, [isProcessing]);
-
-  const runDetectionOnFile = useCallback(
-    async (file: File, mode?: DetectionMode, scanMapBounds?: MapScanBounds | null) => {
-    const activeMode = mode ?? detectionMode;
-    // Clear previous building dots; satellite map scans will repopulate after inference.
-    setBuildingMapMarkers([]);
-    setIsProcessing(true);
-    setImageUrl((prev) => {
-      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-      return null;
-    });
-    setDetectionResult(null);
-    setStatusMessage("");
-
-    try {
-      const url = URL.createObjectURL(file);
-      setImageUrl(url);
-      let result: DetectionResult | null = null;
-      try {
-        result = await runBackendDetection(file, activeMode, detectionEngine);
-      } catch (backendErr) {
-        console.warn("Backend detection failed:", backendErr);
-        const hint =
-          backendErr instanceof Error ? backendErr.message : String(backendErr);
-        // YOLO must hit the real API — mock labels look like "Main Entrance" and are not YOLO output.
-        if (detectionEngine === "yolo") {
-          const sslExtra =
-            /certificate|CERTIFICATE_VERIFY|ssl.*verify/i.test(hint)
-              ? " SSL (YOLO-World/CLIP): try YOLO_INSECURE_SSL=1 or SSL_CERT_FILE=… (README). "
-              : "";
-          setStatusMessage(
-            `YOLO backend error: ${hint.slice(0, 260)}.${sslExtra}Run backend on :8000 (pip install -r requirements.txt), ` +
-              `Vite proxy /api or VITE_API_URL.`,
-          );
-          result = null;
-        } else {
-          setStatusMessage(`SAM 3 unavailable — mock preview. ${hint.slice(0, 160)}`);
-          result = await runMockDetection(file, { mode: activeMode, engine: "sam3" });
-        }
-      }
-      if (result) {
-        setDetectionResult(result);
-        if (result.mock) {
-          setStatusMessage("Mock preview — connect backend with SAM 3 (HF_TOKEN) for real detections.");
-        } else {
-          setStatusMessage("");
-        }
-        if (activeMode === "satellite" && scanMapBounds) {
-          const merged = mergeSatelliteDetectionsOnePerBuilding(
-            result.detections,
-            result.image_width,
-            result.image_height,
-          );
-          setBuildingMapMarkers(
-            mergedBuildingCentersToMapPoints(merged, scanMapBounds, result.image_width, result.image_height),
-          );
-        }
-      } else {
-        setDetectionResult(null);
-      }
-    } catch (err) {
-      console.error("Detection failed:", err);
-      const msg = err instanceof Error ? err.message : "Detection failed";
-      setStatusMessage(msg);
-      setDetectionResult(null);
-    } finally {
-      setIsProcessing(false);
-    }
-  },
-  [detectionMode, detectionEngine],
-  );
-
-  const handleReset = useCallback(() => {
-    setImageUrl((prev) => {
-      if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev);
-      return null;
-    });
-    setDetectionResult(null);
-    setStatusMessage("");
-    setBuildingMapMarkers([]);
-  }, []);
-
-  const handleDownloadBuildingExport = useCallback(() => {
-    if (!detectionResult || detectionMode !== "satellite") return;
-    const merged = mergeSatelliteDetectionsOnePerBuilding(
-      detectionResult.detections,
-      detectionResult.image_width,
-      detectionResult.image_height,
-    );
-    const meta = {
-      image_width: detectionResult.image_width,
-      image_height: detectionResult.image_height,
-      processing_time_s: detectionResult.processing_time_s,
-    };
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    const hasMapPoints =
-      buildingMapMarkers.length > 0 && buildingMapMarkers.length === merged.length;
-    const data = hasMapPoints
-      ? buildBuildingsGeoJSON(merged, buildingMapMarkers, meta, {
-          crs: "EPSG:4326",
-          note: "WGS84 from Scan Map capture. One Point per merged building; coordinates are [longitude, latitude].",
-        })
-      : buildBuildingsGeoJSONPixels(merged, meta);
-    downloadJsonFile(
-      hasMapPoints ? `building-points-wgs84-${stamp}.geojson` : `building-points-pixels-${stamp}.geojson`,
-      data,
-      "application/geo+json",
-    );
-  }, [detectionResult, buildingMapMarkers, detectionMode]);
-
-  /**
-   * For uploaded images: spatial DB / map apps need real lon/lat. Pixel exports have geometry:null.
-   * User aligns the left Leaflet map with the image, then downloads WGS84 GeoJSON.
-   */
-  const handleDownloadWgs84FromMapExtent = useCallback(() => {
-      if (!detectionResult || detectionMode !== "satellite") return;
-      if (mapPanelRef.current?.isStreetView()) {
-        setStatusMessage(
-          "Switch the left panel to Map or Satellite, align it with your image, then export again.",
-        );
-        setTimeout(() => setStatusMessage(""), 6500);
-        return;
-      }
-      const bounds = mapPanelRef.current?.getVisibleMapBounds();
-      if (!bounds) {
-        setStatusMessage("Map not ready — wait a moment and try again.");
-        setTimeout(() => setStatusMessage(""), 4000);
-        return;
-      }
-      const merged = mergeSatelliteDetectionsOnePerBuilding(
-        detectionResult.detections,
-        detectionResult.image_width,
-        detectionResult.image_height,
-      );
-      const mapPoints = mergedBuildingCentersToMapPoints(
-        merged,
-        bounds,
-        detectionResult.image_width,
-        detectionResult.image_height,
-      );
-      const paired = merged
-        .map((b, i) => ({ b, p: mapPoints[i] }))
-        .filter((x) => Number.isFinite(x.p.lat) && Number.isFinite(x.p.lng));
-      if (paired.length === 0) {
-        setStatusMessage("Could not compute coordinates — check map and image dimensions.");
-        setTimeout(() => setStatusMessage(""), 5000);
-        return;
-      }
-      const mergedOk = paired.map((x) => x.b);
-      const pointsOk = paired.map((x) => x.p);
-      const meta = {
-        image_width: detectionResult.image_width,
-        image_height: detectionResult.image_height,
-        processing_time_s: detectionResult.processing_time_s,
-      };
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const note =
-        "WGS84 EPSG:4326. Each feature is a Point [longitude, latitude]. Pixel centers were projected using the visible bounds of the LEFT map at export time — align that map with your uploaded image first, or locations will be wrong. Use this file for PostGIS, spatial SQL, and map viewers.";
-      const data = buildBuildingsGeoJSON(mergedOk, pointsOk, meta, { crs: "EPSG:4326", note });
-      downloadJsonFile(
-        `building-points-wgs84-epsg4326-${stamp}.geojson`,
-        data,
-        "application/geo+json",
-      );
-  }, [detectionResult, detectionMode]);
-
-  const handlePaste = useCallback(
-    (e: ClipboardEvent) => {
-      if (isProcessing) return;
-      const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
-        i.type.startsWith("image/")
-      );
-      if (!item) return;
-      e.preventDefault();
-      const file = item.getAsFile();
-      if (!file) return;
-      // Match pasted screenshots to the active map mode so Street View pastes use solar panel prompts.
-      const pasteMode: DetectionMode = mapPanelRef.current?.isStreetView()
-        ? "streetview"
-        : mapPanelRef.current?.isSatelliteView()
-          ? "satellite"
-          : detectionMode;
-      runDetectionOnFile(file, pasteMode);
-    },
-    [runDetectionOnFile, isProcessing, detectionMode]
-  );
-
-  useEffect(() => {
-    document.addEventListener("paste", handlePaste);
-    return () => document.removeEventListener("paste", handlePaste);
-  }, [handlePaste]);
+    refreshData();
+  }, [refreshData]);
 
   useEffect(() => {
     fetchBackendHealth().then((health) => {
       setBackendHealth(health);
       if (!health) return;
-      if (detectionEngine === "sam3" && !health.sam3_loaded && health.yolo_available) {
-        setDetectionEngine("yolo");
-      } else if (detectionEngine === "yolo" && !health.yolo_available && health.sam3_loaded) {
-        setDetectionEngine("sam3");
-      }
+      if (engine === "sam3" && !health.sam3_loaded && health.yolo_available) setEngine("yolo");
+      else if (engine === "yolo" && !health.yolo_available && health.sam3_loaded) setEngine("sam3");
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
+  const pending = useMemo(() => detections.filter((d) => d.properties.status === "pending"), [detections]);
 
-  const handleScanMap = useCallback(async () => {
-    if (isProcessing) return;
+  const handleMapClick = useCallback((lat: number, lng: number) => {
+    setScanCenter([lat, lng]);
+  }, []);
 
-    if (mapPanelRef.current?.isStreetView()) {
-      const pin = mapPanelRef.current.getPin();
-      if (!pin) {
-        setStatusMessage("Drop a pin on the map first");
-        setTimeout(() => setStatusMessage(""), 3000);
-        return;
-      }
-      setIsProcessing(true);
-      setStatusMessage("Fetching street view image...");
-      try {
-        const heading = mapPanelRef.current.getHeading();
-        const res = await fetch(
-          `${API_BASE}/streetview-image?lat=${pin.lat}&lng=${pin.lng}&heading=${heading}`
-        );
-        if (!res.ok) throw new Error("Failed to fetch street view image");
-        const blob = await res.blob();
-        const file = new File([blob], "streetview.jpg", { type: blob.type || "image/jpeg" });
-        setIsProcessing(false);
-        runDetectionOnFile(file, "streetview");
-      } catch (err) {
-        console.error("Street view fetch failed:", err);
-        setStatusMessage("Could not fetch street view — try pasting a screenshot (⌘V)");
-        setIsProcessing(false);
-        setTimeout(() => setStatusMessage(""), 4000);
-      }
-      return;
-    }
+  const handleSelect = useCallback((id: number) => {
+    setSelectedId(id);
+    setFlyTrigger((t) => t + 1);
+  }, []);
 
-    const el = mapPanelRef.current?.getContainerEl();
-    if (!el) return;
-
-    // Auto-select mode based on active map view
-    const scanMode: DetectionMode = mapPanelRef.current?.isSatelliteView()
-      ? "satellite"
-      : detectionMode;
-
-    setIsProcessing(true);
-    setStatusMessage("Capturing map view...");
+  const handleScanArea = useCallback(async () => {
+    if (!scanCenter || busy) return;
+    setBusy(true);
+    setStatus("Scanning...");
     try {
-      const scanBounds: MapScanBounds | null =
-        scanMode === "satellite" ? mapPanelRef.current?.getVisibleMapBounds() ?? null : null;
-
-      // Use native canvas capture instead of html2canvas
-      const rect = el.getBoundingClientRect();
-      const scale = Math.min(3, Math.max(2, window.devicePixelRatio || 2));
-      const canvas = document.createElement("canvas");
-      canvas.width = rect.width * scale;
-      canvas.height = rect.height * scale;
-      const ctx = canvas.getContext("2d")!;
-      ctx.scale(scale, scale);
-
-      // Capture all tile images from the Leaflet map
-      const tiles = el.querySelectorAll<HTMLImageElement>("img.leaflet-tile");
-      for (const tile of tiles) {
-        try {
-          const tileRect = tile.getBoundingClientRect();
-          const x = tileRect.left - rect.left;
-          const y = tileRect.top - rect.top;
-          ctx.drawImage(tile, x, y, tileRect.width, tileRect.height);
-        } catch (_) { /* cross-origin tile, skip */ }
-      }
-
-      const blob = await new Promise<Blob>((resolve, reject) =>
-        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Canvas capture failed"))), "image/png")
-      );
-      const file = new File([blob], "map-capture.png", { type: "image/png" });
-      setIsProcessing(false);
-      runDetectionOnFile(file, scanMode, scanBounds);
+      const [lat, lng] = scanCenter;
+      const dLat = radiusM / 111_320;
+      const dLng = radiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
+      const bbox: [number, number, number, number] = [lng - dLng, lat - dLat, lng + dLng, lat + dLat];
+      const result = await scanArea(bbox, engine, { center: scanCenter, radius_m: radiusM });
+      setStatus(`Scan complete: ${result.stored.pending} new, ${result.stored.skipped} skipped.`);
+      await refreshData();
     } catch (err) {
-      console.error("Map capture failed:", err);
-      setStatusMessage("Map capture failed — try uploading a screenshot instead");
-      setIsProcessing(false);
+      console.error("Scan failed:", err);
+      setStatus(err instanceof Error ? err.message : "Scan failed");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setStatus(""), 4000);
     }
-  }, [isProcessing, runDetectionOnFile, API_BASE, detectionMode, detectionEngine]);
+  }, [scanCenter, radiusM, engine, busy, refreshData]);
+
+  const handleConfirm = useCallback(
+    async (id: number) => {
+      try {
+        await decideDetection(id, "confirm");
+        await refreshData();
+      } catch (err) {
+        console.error("Confirm failed:", err);
+      }
+    },
+    [refreshData],
+  );
+
+  const handleReject = useCallback(
+    async (id: number) => {
+      try {
+        await decideDetection(id, "reject");
+        await refreshData();
+      } catch (err) {
+        console.error("Reject failed:", err);
+      }
+    },
+    [refreshData],
+  );
+
+  const handleRestore = useCallback(
+    async (id: number) => {
+      try {
+        await decideDetection(id, "restore");
+        await refreshData();
+      } catch (err) {
+        console.error("Restore failed:", err);
+      }
+    },
+    [refreshData],
+  );
+
+  const handleAcceptAll = useCallback(async () => {
+    if (pending.length === 0) return;
+    setBusy(true);
+    try {
+      await decideBatch(pending.map((d) => d.properties.id), "confirmed");
+      await refreshData();
+    } catch (err) {
+      console.error("Accept all failed:", err);
+    } finally {
+      setBusy(false);
+    }
+  }, [pending, refreshData]);
 
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
-      {/* Ambient background (purely visual) */}
       <div className="pointer-events-none absolute inset-0 opacity-[0.55] grid-bg" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1100px_circle_at_18%_12%,hsl(var(--primary)/0.16),transparent_45%),radial-gradient(900px_circle_at_85%_22%,hsl(150_70%_45%/0.10),transparent_45%),radial-gradient(1200px_circle_at_50%_85%,hsl(40_90%_55%/0.08),transparent_55%)]" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-24 scanline opacity-70" />
 
-      {/* Top bar */}
       <header className="relative z-30 flex items-center justify-between border-b border-border/70 bg-card/70 px-6 py-3 backdrop-blur-md">
         <div className="flex items-center gap-3.5">
           <div className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-border/60 bg-gradient-to-br from-primary/20 via-background/20 to-background/10 shadow-[0_0_0_1px_hsl(var(--primary)/0.12),0_16px_34px_-22px_hsl(var(--primary)/0.55)]">
@@ -522,461 +148,127 @@ const Index = () => {
           <div>
             <h1 className="font-brand text-[19px] leading-none sm:text-[23px]">
               <span className="text-foreground">Solar</span>
-              <span className="text-[#81e6d9] drop-shadow-[0_0_14px_hsl(173_80%_50%/0.35)]">
-                Trace
-              </span>
+              <span className="text-[#81e6d9] drop-shadow-[0_0_14px_hsl(173_80%_50%/0.35)]">Trace</span>
             </h1>
           </div>
         </div>
 
         <div className="flex items-center gap-4">
-          <StatusIndicator
-            icon={<MapPin className="h-3 w-3" />}
-            label="Location"
-            active={!!selectedPin}
-          />
-          <StatusIndicator
-            icon={<Eye className="h-3 w-3" />}
-            label="Detection"
-            active={!!detectionResult}
-          />
+          <StatusIndicator icon={<MapPin className="h-3 w-3" />} label="Scan area" active={!!scanCenter} />
+          <StatusIndicator icon={<Eye className="h-3 w-3" />} label="Detections" active={detections.length > 0} />
           <div className="ml-2 hidden rounded-md border border-border/60 bg-background/30 px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted-foreground sm:block">
             Solar panel detection
           </div>
         </div>
       </header>
 
-      <BackendStatusBanner
-        health={backendHealth}
-        sam3Available={sam3Available}
-        yoloAvailable={yoloAvailable}
-        streetviewAvailable={streetviewAvailable}
-      />
+      <BackendStatusBanner health={backendHealth} sam3Available={sam3Available} yoloAvailable={yoloAvailable} />
 
-      {/* Tab switcher: persisted review-queue workflow vs. single-shot Quick Scan */}
-      <div className="relative z-20 flex shrink-0 items-center gap-2 border-b border-border/70 bg-card/50 px-6 py-2">
-        <button
-          type="button"
-          onClick={() => setPageTab("review")}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-[11px] tracking-wide transition-colors ${
-            pageTab === "review"
-              ? "bg-primary/20 text-primary"
-              : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
-          }`}
-        >
-          <LayoutGrid className="h-3.5 w-3.5" /> Review Queue
-        </button>
-        <button
-          type="button"
-          onClick={() => setPageTab("quick")}
-          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-[11px] tracking-wide transition-colors ${
-            pageTab === "quick"
-              ? "bg-primary/20 text-primary"
-              : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
-          }`}
-        >
-          <ImagePlus className="h-3.5 w-3.5" /> Quick Scan
-        </button>
-      </div>
-
-      {pageTab === "review" && (
-        <div className="relative z-20 flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          <div className="min-w-0 flex-1 shrink-0 overflow-hidden border-r border-border/70 bg-card/20">
-            <div className="flex h-full w-full flex-col gap-2 p-3">
-              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card/70 px-3 py-2 backdrop-blur-md">
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  {scanCenter ? `Center: ${scanCenter[0].toFixed(4)}, ${scanCenter[1].toFixed(4)}` : "Click the map to place a scan square"}
-                </span>
-                <div className="ml-auto flex items-center gap-2">
-                  <label className="font-mono text-[10px] text-muted-foreground">
-                    Radius {scanRadiusM}m
-                  </label>
-                  <input
-                    type="range"
-                    min={50}
-                    max={800}
-                    step={25}
-                    value={scanRadiusM}
-                    onChange={(e) => setScanRadiusM(Number(e.target.value))}
-                    className="w-24"
-                  />
-                  <div className="flex overflow-hidden rounded-lg border border-border/70">
-                    <button
-                      type="button"
-                      onClick={() => setReviewEngine("sam3")}
-                      className={`px-2 py-1 font-mono text-[10px] ${reviewEngine === "sam3" ? "bg-violet-500/20 text-violet-200" : "text-muted-foreground"}`}
-                    >
-                      SAM 3
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReviewEngine("yolo")}
-                      className={`border-l border-border/70 px-2 py-1 font-mono text-[10px] ${reviewEngine === "yolo" ? "bg-amber-500/15 text-amber-200" : "text-muted-foreground"}`}
-                    >
-                      YOLO
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleScanArea}
-                    disabled={!scanCenter || reviewBusy}
-                    className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
-                  >
-                    <ScanSearch className="h-3.5 w-3.5" /> Scan
-                  </button>
-                </div>
-              </div>
-              {reviewStatus && (
-                <div className="shrink-0 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary">
-                  {reviewStatus}
-                </div>
-              )}
-              <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border/70">
-                <SolarScanMap
-                  detections={reviewDetections}
-                  selectedId={reviewSelectedId}
-                  scanCenter={scanCenter}
-                  radiusM={scanRadiusM}
-                  onMapClick={handleReviewMapClick}
-                  onSelectFeature={handleReviewSelect}
-                  flyToTrigger={reviewFlyTrigger}
-                />
-              </div>
-            </div>
-          </div>
-          <div className="w-[340px] shrink-0 overflow-hidden bg-card/30">
-            <SolarReviewQueue
-              pending={pendingDetections}
-              stats={reviewStats}
-              selectedId={reviewSelectedId}
-              onSelect={handleReviewSelect}
-              onConfirm={handleConfirmDetection}
-              onReject={handleRejectDetection}
-              onRestore={handleRestoreDetection}
-              onAcceptAll={handleAcceptAll}
-              busy={reviewBusy}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Split panes (Quick Scan: single-shot upload/paste/scan-map, no persistence) */}
-      {pageTab === "quick" && (
       <div className="relative z-20 flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        {/* Left: Map */}
-        <div className="min-w-0 w-1/2 shrink-0 overflow-hidden border-r border-border/70 bg-card/20">
-          <div className="flex h-full w-full flex-col p-3 gap-3">
-            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border/70 bg-card/40 shadow-[0_10px_30px_-18px_hsl(var(--primary)/0.22)]">
-              <MapPanel
-                ref={mapPanelRef}
-                onPinDrop={setSelectedPin}
-                selectedPin={selectedPin}
-                buildingMarkers={buildingMapMarkers}
-              />
-            </div>
-            {showNearestDisposalCard && (
-              <NearestDisposalSiteCard
-                isLoading={landfillsLoading}
-                referenceCoords={referenceCoords}
-                nearest={nearestDisposalSite}
-              />
-            )}
-          </div>
-        </div>
-
-        {/* Right: Image analysis */}
-        <div className="relative z-20 flex min-h-0 min-w-0 w-1/2 shrink-0 flex-col overflow-hidden bg-card/20">
-          {/* Panel header — flex-wrap + min-w-0 so controls are never clipped horizontally */}
-          <div className="relative flex shrink-0 flex-wrap items-center gap-x-2 gap-y-2 border-b border-border/70 bg-card/70 px-3 py-2.5 backdrop-blur-md sm:gap-x-3 sm:px-4 sm:py-3 md:px-5">
-            <div className="flex shrink-0 items-center gap-2">
-              <div className="h-2 w-2 shrink-0 rounded-full bg-primary shadow-[0_0_18px_hsl(var(--primary)/0.55)] animate-pulse-glow" />
-              <span
-                className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-primary sm:text-[11px] sm:tracking-[0.22em]"
-                title="Inference pipeline"
-              >
-                Inference
+        <div className="min-w-0 flex-1 shrink-0 overflow-hidden border-r border-border/70 bg-card/20">
+          <div className="flex h-full w-full flex-col gap-2 p-3">
+            <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card/70 px-3 py-2 backdrop-blur-md">
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {scanCenter
+                  ? `Center: ${scanCenter[0].toFixed(4)}, ${scanCenter[1].toFixed(4)}`
+                  : "Click the map to place a scan square"}
               </span>
-            </div>
-            <div className="flex shrink-0 overflow-hidden rounded-lg border border-border/70 bg-background/20">
-              <button
-                type="button"
-                onClick={() => setDetectionMode("streetview")}
-                disabled={isProcessing}
-                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 font-mono text-[10px] tracking-wide transition-colors sm:px-3 ${
-                  detectionMode === "streetview"
-                    ? "bg-primary/20 text-primary"
-                    : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
-                } ${isProcessing ? "opacity-50 pointer-events-none" : ""}`}
-              >
-                <div className="h-3 w-3 shrink-0" />
-                Solar Panels
-              </button>
-            </div>
-            <div className="flex shrink-0 overflow-hidden rounded-lg border border-border/70 bg-background/20">
-              <button
-                type="button"
-                onClick={() => setDetectionEngine("sam3")}
-                disabled={isProcessing || (backendHealth !== null && !sam3Available)}
-                title={
-                  sam3Available
-                    ? "Meta SAM 3 — promptable segmentation (mask polygons)"
-                    : "SAM 3 unavailable — set HF_TOKEN and restart backend"
-                }
-                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 font-mono text-[10px] tracking-wide transition-colors ${
-                  detectionEngine === "sam3"
-                    ? "bg-violet-500/20 text-violet-200"
-                    : "text-muted-foreground hover:bg-violet-500/10 hover:text-violet-200/90"
-                } ${isProcessing || (backendHealth !== null && !sam3Available) ? "opacity-50 pointer-events-none" : ""}`}
-              >
-                <Sparkles className="h-3 w-3 shrink-0" />
-                SAM 3
-              </button>
-              <button
-                type="button"
-                onClick={() => setDetectionEngine("yolo")}
-                disabled={isProcessing || (backendHealth !== null && !yoloAvailable)}
-                title={
-                  yoloAvailable
-                    ? detectionMode === "streetview"
-                      ? "YOLO-World (local weights) or YOLOv8 COCO — bounding boxes"
-                      : "YOLO — YOLO-World for building prompts when world weights exist; else COCO (coarse)"
-                    : "YOLO unavailable — add yolov8*.pt weights to backend/models"
-                }
-                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap border-l border-border/70 px-2.5 py-1.5 font-mono text-[10px] tracking-wide transition-colors ${
-                  detectionEngine === "yolo"
-                    ? "bg-amber-500/15 text-amber-200"
-                    : "text-muted-foreground hover:bg-amber-500/10 hover:text-amber-200/90"
-                } ${isProcessing || (backendHealth !== null && !yoloAvailable) ? "opacity-50 pointer-events-none" : ""}`}
-              >
-                <Boxes className="h-3 w-3 shrink-0" />
-                YOLO
-              </button>
-            </div>
-            <label
-              className={`group flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-mono text-[11px] text-primary transition-all hover:bg-primary/15 hover:border-primary/55 hover:shadow-[0_0_0_1px_hsl(var(--primary)/0.18),0_10px_22px_-16px_hsl(var(--primary)/0.35)] sm:px-3 sm:text-xs ${
-                isProcessing ? "pointer-events-none opacity-50" : ""
-              }`}
-            >
-              <Upload className="h-3.5 w-3.5 shrink-0 transition-transform group-hover:-translate-y-[1px]" />
-              <input
-                id="facade-file-input"
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/*"
-                disabled={isProcessing}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) runDetectionOnFile(file);
-                  e.target.value = "";
-                }}
-                className="hidden"
-              />
-              Upload image
-            </label>
-            <button
-              type="button"
-              onClick={handleScanMap}
-              disabled={isProcessing}
-              className={`group flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-mono text-[11px] text-primary transition-all hover:bg-primary/15 hover:border-primary/55 hover:shadow-[0_0_0_1px_hsl(var(--primary)/0.18),0_10px_22px_-16px_hsl(var(--primary)/0.35)] sm:px-3 sm:text-xs ${
-                isProcessing ? "pointer-events-none opacity-50" : ""
-              }`}
-            >
-              <ScanSearch className="h-3.5 w-3.5 shrink-0 transition-transform group-hover:-translate-y-[1px]" />
-              Scan Map
-            </button>
-          </div>
-
-          <div className="flex flex-1 flex-col overflow-auto">
-            {detectionResult && imageUrl ? (
-              <DetectionOverlay
-                imageUrl={imageUrl}
-                result={detectionResult}
-                onReset={handleReset}
-                onUploadClick={() => document.getElementById("facade-file-input")?.click()}
-                isProcessing={isProcessing}
-                satelliteMode={detectionMode === "satellite"}
-                hasMapLinkedPoints={buildingMapMarkers.length > 0}
-                onDownloadBuildingExport={handleDownloadBuildingExport}
-                onDownloadWgs84FromMapExtent={handleDownloadWgs84FromMapExtent}
-              />
-            ) : imageUrl && statusMessage && !isProcessing ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-5 p-10">
-                <img
-                  src={imageUrl}
-                  alt="Uploaded"
-                  className="max-h-64 rounded-xl border border-border/70 bg-background/20 object-contain shadow-[0_14px_30px_-22px_rgba(0,0,0,0.75)]"
+              <div className="ml-auto flex items-center gap-2">
+                <label className="font-mono text-[10px] text-muted-foreground">Radius {radiusM}m</label>
+                <input
+                  type="range"
+                  min={50}
+                  max={800}
+                  step={25}
+                  value={radiusM}
+                  onChange={(e) => setRadiusM(Number(e.target.value))}
+                  className="w-24"
                 />
-                <p className="font-mono text-sm text-destructive">{statusMessage}</p>
-                <div className="flex gap-3">
+                <div className="flex overflow-hidden rounded-lg border border-border/70">
                   <button
                     type="button"
-                    onClick={() => document.getElementById("facade-file-input")?.click()}
-                    className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 font-mono text-xs text-primary transition-all hover:bg-primary/15 hover:border-primary/55"
+                    onClick={() => setEngine("sam3")}
+                    className={`px-2 py-1 font-mono text-[10px] ${engine === "sam3" ? "bg-violet-500/20 text-violet-200" : "text-muted-foreground"}`}
                   >
-                    Try again
+                    SAM 3
                   </button>
                   <button
                     type="button"
-                    onClick={handleReset}
-                    className="rounded-lg border border-border/70 bg-background/10 px-3 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-muted/40"
+                    onClick={() => setEngine("yolo")}
+                    className={`border-l border-border/70 px-2 py-1 font-mono text-[10px] ${engine === "yolo" ? "bg-amber-500/15 text-amber-200" : "text-muted-foreground"}`}
                   >
-                    Upload different
+                    YOLO
                   </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={handleScanArea}
+                  disabled={!scanCenter || busy}
+                  className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+                >
+                  <ScanSearch className="h-3.5 w-3.5" /> Scan
+                </button>
               </div>
-            ) : isProcessing ? (
-              <ProcessingCountdownPanel scanCountdown={scanCountdown} />
-            ) : (
-              <div
-                className="flex min-h-0 flex-1 flex-col items-center justify-center gap-7 p-10 text-center"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const file = e.dataTransfer.files[0];
-                  if (file?.type.startsWith("image/") && !isProcessing)
-                    runDetectionOnFile(file);
-                }}
-              >
-                <p className="font-mono text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                  Upload an image
-                </p>
-                {/* Primary upload: visible native file input - most reliable */}
-                <label className="flex cursor-pointer flex-col items-center gap-3">
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/*"
-                    disabled={isProcessing}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) runDetectionOnFile(file);
-                      e.target.value = "";
-                    }}
-                    className="block w-full max-w-xs font-mono text-xs file:mr-3 file:cursor-pointer file:rounded-lg file:border-0 file:bg-primary file:px-4 file:py-2.5 file:font-semibold file:text-primary-foreground hover:file:bg-primary/90"
-                  />
-                  <span className="font-mono text-[10px] text-muted-foreground">
-                    or drag & drop, paste (⌘V)
-                  </span>
-                </label>
-                <p className="font-mono text-[10px] text-muted-foreground/60">
-                  Click map to get coordinates
-                </p>
+            </div>
+            {status && (
+              <div className="shrink-0 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary">
+                {status}
               </div>
             )}
+            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border/70">
+              <SolarScanMap
+                detections={detections}
+                selectedId={selectedId}
+                scanCenter={scanCenter}
+                radiusM={radiusM}
+                onMapClick={handleMapClick}
+                onSelectFeature={handleSelect}
+                flyToTrigger={flyTrigger}
+              />
+            </div>
           </div>
         </div>
+        <div className="w-[340px] shrink-0 overflow-hidden bg-card/30">
+          <SolarReviewQueue
+            pending={pending}
+            stats={stats}
+            selectedId={selectedId}
+            onSelect={handleSelect}
+            onConfirm={handleConfirm}
+            onReject={handleReject}
+            onRestore={handleRestore}
+            onAcceptAll={handleAcceptAll}
+            busy={busy}
+          />
+        </div>
       </div>
-      )}
     </div>
   );
 };
 
-/** Same centered panel + giant type as pre-refactor processing UI (no dimmed image / gray scrim). */
 function BackendStatusBanner({
   health,
   sam3Available,
   yoloAvailable,
-  streetviewAvailable,
 }: {
   health: BackendHealth | null;
   sam3Available: boolean;
   yoloAvailable: boolean;
-  streetviewAvailable: boolean;
 }) {
   if (health === null) {
     return (
       <div className="relative z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-[11px] text-amber-100">
-        Backend offline — detection will use mock preview where available. Start API on port 8000.
+        Backend offline — start the API on port 8000 to scan.
       </div>
     );
   }
-
   const issues: string[] = [];
   if (!sam3Available) issues.push("SAM 3 (set HF_TOKEN)");
   if (!yoloAvailable) issues.push("YOLO (add .pt weights)");
-  if (!streetviewAvailable) issues.push("Street View (set GOOGLE_MAPS_API_KEY)");
-
   if (issues.length === 0) return null;
-
   return (
     <div className="relative z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-[11px] text-amber-100">
       Partial backend setup: {issues.join(" · ")}
-    </div>
-  );
-}
-
-function ProcessingCountdownPanel({ scanCountdown }: { scanCountdown: number | null }) {
-  return (
-    <div
-      className="flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-5 p-10"
-      aria-busy="true"
-    >
-      <div className="text-center">
-        {scanCountdown !== null && scanCountdown > 0 ? (
-          <div
-            className="font-mono text-[10.5rem] font-extrabold leading-none text-primary drop-shadow-[0_0_18px_hsl(var(--primary)/0.35)] tabular-nums"
-            aria-live="polite"
-          >
-            {scanCountdown}
-          </div>
-        ) : scanCountdown === 0 ? (
-          <div
-            className="mt-1 font-mono text-7xl font-extrabold leading-none text-primary"
-            aria-live="assertive"
-          >
-            OOPS!
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function NearestDisposalSiteCard({
-  isLoading,
-  referenceCoords,
-  nearest,
-}: {
-  isLoading: boolean;
-  referenceCoords: { lat: number; lng: number } | null;
-  nearest: ReturnType<typeof findNearestLandfill>;
-}) {
-  return (
-    <div className="shrink-0 rounded-xl border border-border/70 bg-card/70 p-4 backdrop-blur-md shadow-[0_10px_30px_-18px_hsl(var(--primary)/0.22)]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Building2 className="h-4 w-4 shrink-0 text-primary" />
-          <h2 className="font-mono text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
-            Nearest Disposal Site
-          </h2>
-        </div>
-        <Link
-          to="/map"
-          className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] text-primary transition-colors hover:text-primary/80"
-        >
-          View map
-          <ExternalLink className="h-3 w-3" />
-        </Link>
-      </div>
-
-      {isLoading ? (
-        <p className="mt-3 font-mono text-xs text-muted-foreground">Loading landfill data…</p>
-      ) : !referenceCoords ? (
-        <p className="mt-3 font-mono text-xs text-muted-foreground">
-          Drop a pin on the map or run a satellite scan to get coordinates for nearest-site lookup.
-        </p>
-      ) : !nearest ? (
-        <p className="mt-3 font-mono text-xs text-muted-foreground">
-          No open disposal sites found near{" "}
-          {referenceCoords.lat.toFixed(4)}, {referenceCoords.lng.toFixed(4)}.
-        </p>
-      ) : (
-        <div className="mt-3 space-y-1">
-          <p className="text-sm font-medium text-foreground">{nearest.landfill.name}</p>
-          <p className="font-mono text-xs text-muted-foreground">
-            {nearest.distanceMiles.toFixed(1)} mi away · {nearest.landfill.state}
-          </p>
-        </div>
-      )}
     </div>
   );
 }
@@ -992,21 +284,11 @@ function StatusIndicator({
 }) {
   return (
     <div className="flex items-center gap-1.5 font-mono text-[11px]">
-      <div
-        className={`transition-opacity duration-300 ${
-          active ? "text-primary opacity-100" : "text-muted-foreground opacity-30"
-        }`}
-      >
+      <div className={`transition-opacity duration-300 ${active ? "text-primary opacity-100" : "text-muted-foreground opacity-30"}`}>
         {icon}
       </div>
-      <span className={active ? "text-primary" : "text-muted-foreground"}>
-        {label}
-      </span>
-      <div
-        className={`h-1.5 w-1.5 rounded-full transition-colors duration-300 ${
-          active ? "bg-green-500" : "bg-muted-foreground/30"
-        }`}
-      />
+      <span className={active ? "text-primary" : "text-muted-foreground"}>{label}</span>
+      <div className={`h-1.5 w-1.5 rounded-full transition-colors duration-300 ${active ? "bg-green-500" : "bg-muted-foreground/30"}`} />
     </div>
   );
 }

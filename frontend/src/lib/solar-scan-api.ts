@@ -1,6 +1,6 @@
 // Client for the persisted solar-panel scan/review-queue backend (POST /scan,
 // GET/POST /detections*, GET /coverage, GET /detection-stats, exports).
-// Follows the same fetch/timeout pattern as backendDetection.ts.
+// Follows a fetch-with-timeout pattern consistent with the rest of the app's API clients.
 const API_BASE = import.meta.env.VITE_API_URL ?? "/api";
 const REQUEST_TIMEOUT_MS = 3 * 60 * 1000;
 

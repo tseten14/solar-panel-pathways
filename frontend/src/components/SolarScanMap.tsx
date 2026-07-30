@@ -1,7 +1,7 @@
 // react-leaflet map for the solar-panel review-queue workflow: click to place a scan
 // square, render color-coded detection polygons (pending/confirmed/rejected), fly to
-// the selected detection. Declarative react-leaflet (vs. MapPanel.tsx's imperative
-// raw-Leaflet API) scales better to the many independently-styled overlay layers here.
+// the selected detection. Declarative react-leaflet scales better to the many
+// independently-styled overlay layers here than an imperative raw-Leaflet API would.
 import { useEffect, useMemo, useRef } from "react";
 import {
   MapContainer,
