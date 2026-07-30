@@ -44,8 +44,8 @@ def test_detect_sam3_success(mock_run, client):
     mock_run.assert_called_once()
 
 
-@patch("main.run_yolo_detection")
-def test_detect_yolo_success(mock_run, client):
+@patch("main.run_detection")
+def test_detect_satellite_success(mock_run, client):
     mock_run.return_value = {
         "detections": [],
         "image_width": 8,
@@ -53,8 +53,16 @@ def test_detect_yolo_success(mock_run, client):
         "processing_time_s": 0.1,
     }
     res = client.post(
-        "/detect?mode=satellite&engine=yolo",
+        "/detect?mode=satellite&engine=sam3",
         files={"file": ("tiny.png", _tiny_png(), "image/png")},
     )
     assert res.status_code == 200
     mock_run.assert_called_once()
+
+
+def test_detect_rejects_unknown_engine(client):
+    res = client.post(
+        "/detect?mode=satellite&engine=yolo",
+        files={"file": ("tiny.png", _tiny_png(), "image/png")},
+    )
+    assert res.status_code == 422

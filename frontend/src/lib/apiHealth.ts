@@ -1,7 +1,6 @@
 export interface BackendHealth {
   status: string;
   sam3_loaded: boolean;
-  yolo_available: boolean;
   cache_landfills: boolean;
   cache_solar: boolean;
   streetview_configured: boolean;

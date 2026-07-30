@@ -20,11 +20,8 @@ export interface Detection {
   polygon?: [number, number][];
 }
 
-/** Backend inference stack (SAM 3 vs YOLO). */
-export type DetectionEngineId = "sam3" | "yolo";
-
-/** YOLO-World (text prompts) vs YOLOv8 COCO — set by API when engine is yolo. */
-export type YoloVariantId = "world" | "coco";
+/** Backend inference stack. SAM 3 is the only engine. */
+export type DetectionEngineId = "sam3";
 
 export interface DetectionResult {
   // Width/height of the analyzed image so the UI can set the correct SVG viewBox.
@@ -37,12 +34,6 @@ export interface DetectionResult {
 
   /** Set by API: which model produced this result. */
   engine?: DetectionEngineId;
-
-  /** When engine is yolo: open-vocabulary World vs COCO detector. */
-  yolo_variant?: YoloVariantId;
-
-  /** True when the frontend used the offline mock (backend error). */
-  mock?: boolean;
 }
 
 export interface MapPin {

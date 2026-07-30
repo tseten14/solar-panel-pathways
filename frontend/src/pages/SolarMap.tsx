@@ -1,16 +1,17 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { MapPin, Eye, ScanSearch } from "lucide-react";
+import { MapPin, Eye, ScanSearch, Square, Grid2x2, Eraser, Trash2 } from "lucide-react";
 import { GeoAiMark } from "@/components/GeoAiMark";
-import SolarScanMap from "@/components/SolarScanMap";
+import SolarScanMap, { type ScanTool } from "@/components/SolarScanMap";
 import SolarReviewQueue from "@/components/SolarReviewQueue";
 import { fetchBackendHealth, type BackendHealth } from "@/lib/apiHealth";
-import type { DetectionEngineId } from "@/types/detection";
 import {
   scanArea,
   fetchDetections,
   fetchDetectionStats,
   decideDetection,
   decideBatch,
+  mergeDetections,
+  eraseCircle,
   type SolarDetectionFeature,
   type DetectionStats,
 } from "@/lib/solar-scan-api";
@@ -18,15 +19,16 @@ import {
 const Index = () => {
   const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
   const sam3Available = backendHealth?.sam3_loaded ?? false;
-  const yoloAvailable = backendHealth?.yolo_available ?? false;
 
   const [detections, setDetections] = useState<SolarDetectionFeature[]>([]);
   const [stats, setStats] = useState<DetectionStats | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [focusedId, setFocusedId] = useState<number | null>(null);
   const [flyTrigger, setFlyTrigger] = useState(0);
-  const [scanCenter, setScanCenter] = useState<[number, number] | null>(null);
+
+  const [tool, setTool] = useState<ScanTool>("single");
+  const [squares, setSquares] = useState<Array<[number, number]>>([]);
   const [radiusM, setRadiusM] = useState(200);
-  const [engine, setEngine] = useState<DetectionEngineId>("sam3");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
@@ -45,77 +47,95 @@ const Index = () => {
   }, [refreshData]);
 
   useEffect(() => {
-    fetchBackendHealth().then((health) => {
-      setBackendHealth(health);
-      if (!health) return;
-      if (engine === "sam3" && !health.sam3_loaded && health.yolo_available) setEngine("yolo");
-      else if (engine === "yolo" && !health.yolo_available && health.sam3_loaded) setEngine("sam3");
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    fetchBackendHealth().then(setBackendHealth);
+  }, []);
 
   const pending = useMemo(() => detections.filter((d) => d.properties.status === "pending"), [detections]);
 
-  const handleMapClick = useCallback((lat: number, lng: number) => {
-    setScanCenter([lat, lng]);
+  const flash = useCallback((msg: string) => {
+    setStatus(msg);
+    setTimeout(() => setStatus(""), 4000);
   }, []);
 
-  const handleSelect = useCallback((id: number) => {
-    setSelectedId(id);
+  const handleSelect = useCallback((id: number, additive: boolean) => {
+    if (additive) {
+      setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+      setFocusedId(id);
+      return;
+    }
+    setSelectedIds([id]);
+    setFocusedId(id);
     setFlyTrigger((t) => t + 1);
   }, []);
 
-  const handleScanArea = useCallback(async () => {
-    if (!scanCenter || busy) return;
+  const bboxAround = (lat: number, lng: number): [number, number, number, number] => {
+    const dLat = radiusM / 111_320;
+    const dLng = radiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
+    return [lng - dLng, lat - dLat, lng + dLng, lat + dLat];
+  };
+
+  const handleMapClick = useCallback(
+    async (lat: number, lng: number) => {
+      if (busy) return;
+      if (tool === "erase") {
+        setBusy(true);
+        try {
+          const res = await eraseCircle([lat, lng], radiusM);
+          flash(`Deleted ${res.erased} detection${res.erased === 1 ? "" : "s"} in the circle.`);
+          await refreshData();
+        } catch (err) {
+          console.error("Erase failed:", err);
+          flash(err instanceof Error ? err.message : "Erase failed");
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+      if (tool === "multi") {
+        setSquares((prev) => [...prev, [lat, lng]]);
+      } else {
+        setSquares([[lat, lng]]);
+      }
+    },
+    [tool, radiusM, busy, refreshData, flash],
+  );
+
+  const handleScan = useCallback(async () => {
+    if (squares.length === 0 || busy) return;
     setBusy(true);
-    setStatus("Scanning...");
+    let totalNew = 0;
+    let totalSkipped = 0;
     try {
-      const [lat, lng] = scanCenter;
-      const dLat = radiusM / 111_320;
-      const dLng = radiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
-      const bbox: [number, number, number, number] = [lng - dLng, lat - dLat, lng + dLng, lat + dLat];
-      const result = await scanArea(bbox, engine, { center: scanCenter, radius_m: radiusM });
-      setStatus(`Scan complete: ${result.stored.pending} new, ${result.stored.skipped} skipped.`);
-      await refreshData();
+      // Scan squares one at a time, persisting after each, so partial progress
+      // survives a failure partway through a multi-square run.
+      for (let i = 0; i < squares.length; i++) {
+        const [lat, lng] = squares[i];
+        setStatus(`Scanning square ${i + 1} of ${squares.length}…`);
+        const result = await scanArea(bboxAround(lat, lng), "sam3", {
+          center: [lat, lng],
+          radius_m: radiusM,
+        });
+        totalNew += result.stored.pending;
+        totalSkipped += result.stored.skipped;
+        await refreshData();
+      }
+      flash(`Scanned ${squares.length} square${squares.length === 1 ? "" : "s"}: ${totalNew} new, ${totalSkipped} skipped.`);
+      setSquares([]);
     } catch (err) {
       console.error("Scan failed:", err);
-      setStatus(err instanceof Error ? err.message : "Scan failed");
+      flash(err instanceof Error ? err.message : "Scan failed");
     } finally {
       setBusy(false);
-      setTimeout(() => setStatus(""), 4000);
     }
-  }, [scanCenter, radiusM, engine, busy, refreshData]);
+  }, [squares, radiusM, busy, refreshData, flash]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleConfirm = useCallback(
-    async (id: number) => {
+  const decide = useCallback(
+    async (id: number, action: "confirm" | "reject" | "restore") => {
       try {
-        await decideDetection(id, "confirm");
+        await decideDetection(id, action);
         await refreshData();
       } catch (err) {
-        console.error("Confirm failed:", err);
-      }
-    },
-    [refreshData],
-  );
-
-  const handleReject = useCallback(
-    async (id: number) => {
-      try {
-        await decideDetection(id, "reject");
-        await refreshData();
-      } catch (err) {
-        console.error("Reject failed:", err);
-      }
-    },
-    [refreshData],
-  );
-
-  const handleRestore = useCallback(
-    async (id: number) => {
-      try {
-        await decideDetection(id, "restore");
-        await refreshData();
-      } catch (err) {
-        console.error("Restore failed:", err);
+        console.error(`${action} failed:`, err);
       }
     },
     [refreshData],
@@ -134,45 +154,83 @@ const Index = () => {
     }
   }, [pending, refreshData]);
 
+  const handleMerge = useCallback(async () => {
+    if (selectedIds.length < 2 || busy) return;
+    setBusy(true);
+    try {
+      const res = await mergeDetections(selectedIds);
+      flash(`Merged ${selectedIds.length} detections into #${res.merged_id}.`);
+      setSelectedIds([res.merged_id]);
+      setFocusedId(res.merged_id);
+      await refreshData();
+    } catch (err) {
+      console.error("Merge failed:", err);
+      flash(err instanceof Error ? err.message : "Merge failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [selectedIds, busy, refreshData, flash]);
+
+  const toolHint =
+    tool === "erase"
+      ? "Click the map to delete every detection inside the circle"
+      : tool === "multi"
+        ? `Click to add scan squares (${squares.length} placed)`
+        : "Click the map to place a scan square";
+
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
       <div className="pointer-events-none absolute inset-0 opacity-[0.55] grid-bg" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1100px_circle_at_18%_12%,hsl(var(--primary)/0.16),transparent_45%),radial-gradient(900px_circle_at_85%_22%,hsl(150_70%_45%/0.10),transparent_45%),radial-gradient(1200px_circle_at_50%_85%,hsl(40_90%_55%/0.08),transparent_55%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1100px_circle_at_18%_12%,hsl(var(--primary)/0.16),transparent_45%),radial-gradient(900px_circle_at_85%_22%,hsl(150_70%_45%/0.10),transparent_45%)]" />
 
       <header className="relative z-30 flex items-center justify-between border-b border-border/70 bg-card/70 px-6 py-3 backdrop-blur-md">
         <div className="flex items-center gap-3.5">
-          <div className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-border/60 bg-gradient-to-br from-primary/20 via-background/20 to-background/10 shadow-[0_0_0_1px_hsl(var(--primary)/0.12),0_16px_34px_-22px_hsl(var(--primary)/0.55)]">
-            <div className="pointer-events-none absolute inset-0 rounded-xl bg-[radial-gradient(14px_circle_at_30%_30%,hsl(var(--primary)/0.35),transparent_60%)]" />
+          <div className="relative flex h-10 w-10 items-center justify-center rounded-xl border border-border/60 bg-gradient-to-br from-primary/20 via-background/20 to-background/10">
             <GeoAiMark className="relative h-7 w-7 shrink-0 drop-shadow-[0_0_14px_hsl(var(--primary)/0.4)]" />
           </div>
-          <div>
-            <h1 className="font-brand text-[19px] leading-none sm:text-[23px]">
-              <span className="text-foreground">Solar</span>
-              <span className="text-[#81e6d9] drop-shadow-[0_0_14px_hsl(173_80%_50%/0.35)]">Trace</span>
-            </h1>
-          </div>
+          <h1 className="font-brand text-[19px] leading-none sm:text-[23px]">
+            <span className="text-foreground">Solar</span>
+            <span className="text-[#81e6d9] drop-shadow-[0_0_14px_hsl(173_80%_50%/0.35)]">Trace</span>
+          </h1>
         </div>
 
         <div className="flex items-center gap-4">
-          <StatusIndicator icon={<MapPin className="h-3 w-3" />} label="Scan area" active={!!scanCenter} />
+          <StatusIndicator icon={<MapPin className="h-3 w-3" />} label="Scan area" active={squares.length > 0} />
           <StatusIndicator icon={<Eye className="h-3 w-3" />} label="Detections" active={detections.length > 0} />
           <div className="ml-2 hidden rounded-md border border-border/60 bg-background/30 px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted-foreground sm:block">
-            Solar panel detection
+            SAM 3 · solar panel detection
           </div>
         </div>
       </header>
 
-      <BackendStatusBanner health={backendHealth} sam3Available={sam3Available} yoloAvailable={yoloAvailable} />
+      {backendHealth === null ? (
+        <div className="relative z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-[11px] text-amber-100">
+          Backend offline — start the API on port 8000 to scan.
+        </div>
+      ) : !sam3Available ? (
+        <div className="relative z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-[11px] text-amber-100">
+          SAM 3 not loaded — set HF_TOKEN and restart the backend.
+        </div>
+      ) : null}
 
       <div className="relative z-20 flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="min-w-0 flex-1 shrink-0 overflow-hidden border-r border-border/70 bg-card/20">
           <div className="flex h-full w-full flex-col gap-2 p-3">
             <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card/70 px-3 py-2 backdrop-blur-md">
-              <span className="font-mono text-[10px] text-muted-foreground">
-                {scanCenter
-                  ? `Center: ${scanCenter[0].toFixed(4)}, ${scanCenter[1].toFixed(4)}`
-                  : "Click the map to place a scan square"}
-              </span>
+              <div className="flex overflow-hidden rounded-lg border border-border/70">
+                <ToolButton active={tool === "single"} onClick={() => setTool("single")} title="Single scan square">
+                  <Square className="h-3 w-3" /> Single
+                </ToolButton>
+                <ToolButton active={tool === "multi"} onClick={() => setTool("multi")} title="Place multiple scan squares">
+                  <Grid2x2 className="h-3 w-3" /> Multi
+                </ToolButton>
+                <ToolButton active={tool === "erase"} onClick={() => setTool("erase")} title="Delete detections inside a circle">
+                  <Eraser className="h-3 w-3" /> Erase
+                </ToolButton>
+              </div>
+
+              <span className="font-mono text-[10px] text-muted-foreground">{toolHint}</span>
+
               <div className="ml-auto flex items-center gap-2">
                 <label className="font-mono text-[10px] text-muted-foreground">Radius {radiusM}m</label>
                 <input
@@ -184,43 +242,43 @@ const Index = () => {
                   onChange={(e) => setRadiusM(Number(e.target.value))}
                   className="w-24"
                 />
-                <div className="flex overflow-hidden rounded-lg border border-border/70">
+                {squares.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => setEngine("sam3")}
-                    className={`px-2 py-1 font-mono text-[10px] ${engine === "sam3" ? "bg-violet-500/20 text-violet-200" : "text-muted-foreground"}`}
+                    onClick={() => setSquares([])}
+                    disabled={busy}
+                    title="Clear placed squares"
+                    className="flex items-center justify-center rounded-lg border border-border/60 bg-background/20 px-2 py-1.5 text-muted-foreground transition-colors hover:bg-muted/40 disabled:opacity-50"
                   >
-                    SAM 3
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setEngine("yolo")}
-                    className={`border-l border-border/70 px-2 py-1 font-mono text-[10px] ${engine === "yolo" ? "bg-amber-500/15 text-amber-200" : "text-muted-foreground"}`}
-                  >
-                    YOLO
-                  </button>
-                </div>
+                )}
                 <button
                   type="button"
-                  onClick={handleScanArea}
-                  disabled={!scanCenter || busy}
+                  onClick={handleScan}
+                  disabled={squares.length === 0 || busy || tool === "erase"}
                   className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
                 >
-                  <ScanSearch className="h-3.5 w-3.5" /> Scan
+                  <ScanSearch className="h-3.5 w-3.5" />
+                  {squares.length > 1 ? `Scan all (${squares.length})` : "Scan"}
                 </button>
               </div>
             </div>
+
             {status && (
               <div className="shrink-0 rounded-lg border border-primary/30 bg-primary/10 px-3 py-1.5 font-mono text-[11px] text-primary">
                 {status}
               </div>
             )}
+
             <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border/70">
               <SolarScanMap
                 detections={detections}
-                selectedId={selectedId}
-                scanCenter={scanCenter}
+                selectedIds={selectedIds}
+                focusedId={focusedId}
+                squares={squares}
                 radiusM={radiusM}
+                tool={tool}
                 onMapClick={handleMapClick}
                 onSelectFeature={handleSelect}
                 flyToTrigger={flyTrigger}
@@ -228,16 +286,19 @@ const Index = () => {
             </div>
           </div>
         </div>
+
         <div className="w-[340px] shrink-0 overflow-hidden bg-card/30">
           <SolarReviewQueue
             pending={pending}
             stats={stats}
-            selectedId={selectedId}
+            selectedIds={selectedIds}
+            focusedId={focusedId}
             onSelect={handleSelect}
-            onConfirm={handleConfirm}
-            onReject={handleReject}
-            onRestore={handleRestore}
+            onConfirm={(id) => decide(id, "confirm")}
+            onReject={(id) => decide(id, "reject")}
+            onRestore={(id) => decide(id, "restore")}
             onAcceptAll={handleAcceptAll}
+            onMerge={handleMerge}
             busy={busy}
           />
         </div>
@@ -246,30 +307,28 @@ const Index = () => {
   );
 };
 
-function BackendStatusBanner({
-  health,
-  sam3Available,
-  yoloAvailable,
+function ToolButton({
+  active,
+  onClick,
+  title,
+  children,
 }: {
-  health: BackendHealth | null;
-  sam3Available: boolean;
-  yoloAvailable: boolean;
+  active: boolean;
+  onClick: () => void;
+  title: string;
+  children: React.ReactNode;
 }) {
-  if (health === null) {
-    return (
-      <div className="relative z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-[11px] text-amber-100">
-        Backend offline — start the API on port 8000 to scan.
-      </div>
-    );
-  }
-  const issues: string[] = [];
-  if (!sam3Available) issues.push("SAM 3 (set HF_TOKEN)");
-  if (!yoloAvailable) issues.push("YOLO (add .pt weights)");
-  if (issues.length === 0) return null;
   return (
-    <div className="relative z-20 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-[11px] text-amber-100">
-      Partial backend setup: {issues.join(" · ")}
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className={`flex items-center gap-1 border-border/70 px-2.5 py-1.5 font-mono text-[10px] transition-colors [&:not(:first-child)]:border-l ${
+        active ? "bg-primary/20 text-primary" : "text-muted-foreground hover:bg-primary/10 hover:text-primary"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

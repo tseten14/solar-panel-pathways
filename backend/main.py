@@ -1,4 +1,4 @@
-# FastAPI backend for scene detection: SAM 3 and YOLO (World + COCO fallback; compare via ?engine=sam3|yolo).
+# FastAPI backend for solar-panel detection via SAM 3.
 # Exposes /detect for uploaded images and /streetview for fetching street view imagery.
 import logging
 from pathlib import Path
@@ -25,14 +25,13 @@ from data_cache import (
 from sam3_service import is_sam3_loaded, load_sam3, run_detection
 from solar_ai import router as solar_ai_router
 from solar_scan_api import router as solar_scan_router
-from yolo_service import is_yolo_loaded, load_yolo, run_yolo_detection
 
 logger = logging.getLogger("uvicorn.error")
 
 
 app = FastAPI(
-    title="CV-SCAN-GEOAI Detection API",
-    description="Scene detection via SAM 3 or YOLO (YOLO-World when local weights exist, else YOLOv8 COCO)",
+    title="SolarTrace Detection API",
+    description="Solar-panel detection via SAM 3 (promptable concept segmentation)",
 )
 app.include_router(solar_scan_router)
 app.include_router(solar_ai_router)
@@ -44,11 +43,6 @@ async def startup():
         load_sam3()
     except Exception as e:
         logger.warning(f"SAM 3 preload skipped: {e}")
-
-    try:
-        load_yolo()
-    except Exception as e:
-        logger.warning(f"YOLO preload skipped: {e}")
 
     try:
         await refresh_if_stale()
@@ -71,7 +65,6 @@ async def health():
     return {
         "status": "ok",
         "sam3_loaded": is_sam3_loaded(),
-        "yolo_available": is_yolo_loaded(),
         "cache_landfills": status["cache_landfills"],
         "cache_solar": status["cache_solar"],
         "streetview_configured": google_maps_api_key() is not None,
@@ -211,7 +204,7 @@ async def streetview_image(
 async def detect(
     file: UploadFile = File(...),
     mode: str = Query("streetview", pattern="^(streetview|satellite)$"),
-    engine: str = Query("sam3", pattern="^(sam3|yolo)$"),
+    engine: str = Query("sam3", pattern="^(sam3)$"),
 ):
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(400, "File must be an image (jpeg, png, webp)")
@@ -234,8 +227,6 @@ async def detect(
     logger.info("POST /detect mode=%s engine=%s bytes=%s", mode, engine, len(image_bytes))
 
     try:
-        if engine == "yolo":
-            return run_yolo_detection(image_bytes, mode=mode)
         return run_detection(image_bytes, mode=mode)
     except ValueError as e:
         raise HTTPException(400, str(e))

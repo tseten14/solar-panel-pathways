@@ -57,15 +57,24 @@ async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<
 
 async function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(body || `Request failed: ${res.status}`);
+    const raw = await res.text();
+    // FastAPI returns errors as {"detail": "..."} — surface just the message so the
+    // UI shows "detections do not overlap…" rather than a raw JSON blob.
+    let message = raw;
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      if (typeof parsed?.detail === "string") message = parsed.detail;
+    } catch {
+      // Not JSON — fall through and use the raw body.
+    }
+    throw new Error(message || `Request failed: ${res.status}`);
   }
   return (await res.json()) as T;
 }
 
 export function scanArea(
   bbox: [number, number, number, number],
-  model: "sam3" | "yolo",
+  model: "sam3",
   opts?: { center?: [number, number]; radius_m?: number; auto_confirm?: boolean },
 ): Promise<ScanResult> {
   return withTimeout((signal) =>

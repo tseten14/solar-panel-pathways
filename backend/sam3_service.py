@@ -154,8 +154,8 @@ def _nms(
     # - a more lenient threshold for "building" so neighbors survive
     # - a stricter threshold for other same-class labels
     #
-    # entrance_suppress_iou: optional higher IoU bar for two "entrance" boxes (YOLO-World:
-    # door vs adjacent window on same porch).
+    # entrance_suppress_iou: optional higher IoU bar for two "entrance" boxes
+    # (door vs adjacent window on the same porch).
     if not detections:
         return []
     sorted_dets = sorted(detections, key=lambda d: d["confidence"], reverse=True)

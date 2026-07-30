@@ -1,7 +1,8 @@
-// react-leaflet map for the solar-panel review-queue workflow: click to place a scan
-// square, render color-coded detection polygons (pending/confirmed/rejected), fly to
-// the selected detection. Declarative react-leaflet scales better to the many
-// independently-styled overlay layers here than an imperative raw-Leaflet API would.
+// react-leaflet map for the solar-panel review-queue workflow: place one or many
+// scan squares, render color-coded detection polygons (pending/confirmed/rejected),
+// multi-select for merging, an erase circle, and fly-to on selection. Declarative
+// react-leaflet scales better to the many independently-styled overlay layers here
+// than an imperative raw-Leaflet API would.
 import { useEffect, useMemo, useRef } from "react";
 import {
   MapContainer,
@@ -24,13 +25,17 @@ const STATUS_COLORS: Record<string, string> = {
   rejected: "#7a8a99", // muted gray
 };
 
+export type ScanTool = "single" | "multi" | "erase";
+
 interface SolarScanMapProps {
   detections: SolarDetectionFeature[];
-  selectedId: number | null;
-  scanCenter: [number, number] | null;
+  selectedIds: number[];
+  focusedId: number | null;
+  squares: Array<[number, number]>;
   radiusM: number;
+  tool: ScanTool;
   onMapClick: (lat: number, lng: number) => void;
-  onSelectFeature: (id: number) => void;
+  onSelectFeature: (id: number, additive: boolean) => void;
   flyToTrigger: number;
 }
 
@@ -43,13 +48,13 @@ function ClickCatcher({ onMapClick }: { onMapClick: (lat: number, lng: number) =
   return null;
 }
 
-function FlyToSelected({
+function FlyToFocused({
   detections,
-  selectedId,
+  focusedId,
   flyToTrigger,
 }: {
   detections: SolarDetectionFeature[];
-  selectedId: number | null;
+  focusedId: number | null;
   flyToTrigger: number;
 }) {
   const map = useMap();
@@ -57,19 +62,21 @@ function FlyToSelected({
   useEffect(() => {
     if (flyToTrigger === lastTrigger.current) return;
     lastTrigger.current = flyToTrigger;
-    if (selectedId == null) return;
-    const f = detections.find((d) => d.properties.id === selectedId);
+    if (focusedId == null) return;
+    const f = detections.find((d) => d.properties.id === focusedId);
     if (!f) return;
     map.flyTo([f.properties.lat, f.properties.lng], Math.max(map.getZoom(), 18), { duration: 0.6 });
-  }, [flyToTrigger, selectedId, detections, map]);
+  }, [flyToTrigger, focusedId, detections, map]);
   return null;
 }
 
 export default function SolarScanMap({
   detections,
-  selectedId,
-  scanCenter,
+  selectedIds,
+  focusedId,
+  squares,
   radiusM,
+  tool,
   onMapClick,
   onSelectFeature,
   flyToTrigger,
@@ -79,12 +86,14 @@ export default function SolarScanMap({
     [detections],
   );
 
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
   const styleFor = useMemo(
     () =>
       (feature?: SolarDetectionFeature): PathOptions => {
         const id = feature?.properties.id;
         const status = feature?.properties.status ?? "pending";
-        const selected = id === selectedId;
+        const selected = id != null && selectedSet.has(id);
         return {
           color: selected ? "#ffffff" : STATUS_COLORS[status] ?? STATUS_COLORS.pending,
           weight: selected ? 3 : 1.5,
@@ -92,12 +101,19 @@ export default function SolarScanMap({
           fillOpacity: selected ? 0.55 : 0.35,
         };
       },
-    [selectedId],
+    [selectedSet],
   );
 
   const onEachFeature = (feature: SolarDetectionFeature, layer: Layer) => {
-    layer.on("click", () => onSelectFeature(feature.properties.id));
+    layer.on("click", (e: LeafletMouseEvent) => {
+      // Stop the map's own click handler firing too (it would place a scan square).
+      e.originalEvent?.stopPropagation();
+      const additive = Boolean(e.originalEvent?.shiftKey);
+      onSelectFeature(feature.properties.id, additive);
+    });
   };
+
+  const squareColor = tool === "erase" ? "#ff6b4a" : "#ffd166";
 
   return (
     <MapContainer center={[35.3833, -119.0187]} zoom={13} className="h-full w-full">
@@ -107,17 +123,20 @@ export default function SolarScanMap({
         maxZoom={20}
       />
       <ClickCatcher onMapClick={onMapClick} />
-      <FlyToSelected detections={detections} selectedId={selectedId} flyToTrigger={flyToTrigger} />
-      {scanCenter && (
+      <FlyToFocused detections={detections} focusedId={focusedId} flyToTrigger={flyToTrigger} />
+      {squares.map(([lat, lng], i) => (
         <Circle
-          center={scanCenter}
+          key={`${lat},${lng},${i}`}
+          center={[lat, lng]}
           radius={radiusM}
-          pathOptions={{ color: "#ffd166", weight: 2, dashArray: "6 6", fillOpacity: 0.05 }}
+          pathOptions={{ color: squareColor, weight: 2, dashArray: "6 6", fillOpacity: 0.05 }}
         />
-      )}
+      ))}
       {detections.length > 0 && (
         <LeafletGeoJSON
-          key={detections.map((d) => `${d.properties.id}:${d.properties.status}`).join(",")}
+          // Remount when data OR selection changes — react-leaflet's GeoJSON does not
+          // re-run `style` on prop change, so the selection highlight needs a new key.
+          key={`${detections.map((d) => `${d.properties.id}:${d.properties.status}`).join(",")}|${selectedIds.join(",")}`}
           data={featureCollection as GeoJSON.FeatureCollection}
           style={styleFor as (feature?: GeoJSON.Feature) => PathOptions}
           onEachFeature={onEachFeature as (feature: GeoJSON.Feature, layer: Layer) => void}

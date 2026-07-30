@@ -5,6 +5,8 @@ const USPVDB_URL =
   "https://energy.usgs.gov/arcgis/rest/services/Hosted/uspvdbDyn/FeatureServer/0/query";
 
 interface SolarAttributes {
+  // Index signature satisfies queryArcGISFeatures<T extends Record<string, unknown>>.
+  [key: string]: unknown;
   objectid: number;
   p_name: string | null;
   p_state: string | null;
@@ -112,8 +114,19 @@ export async function fetchSolarStatsByState(): Promise<SolarStateStats[]> {
     } catch {
       // Fall back to direct ArcGIS when backend cache is unavailable.
     }
+    return fetchSolarStatsFromArcGIS();
   }
-  return fetchSolarStatsFromArcGIS();
+  // Live ArcGIS by default, but fall back to the backend's cached copy if the
+  // upstream is unreachable or rate-limited (see fetchLandfills for rationale).
+  try {
+    return await fetchSolarStatsFromArcGIS();
+  } catch (err) {
+    try {
+      return await fetchSolarStatsFromBackend();
+    } catch {
+      throw err; // surface the original upstream error, not the fallback's
+    }
+  }
 }
 
 export async function fetchSolarFacilitiesByState(state: string): Promise<SolarFacility[]> {

@@ -5,6 +5,8 @@ const LMOP_URL =
   "https://services.arcgis.com/cJ9YHowT8TU7DUyn/arcgis/rest/services/New_Landfills/FeatureServer/0/query";
 
 interface LmopAttributes {
+  // Index signature satisfies queryArcGISFeatures<T extends Record<string, unknown>>.
+  [key: string]: unknown;
   OBJECTID: number;
   landfill_name: string | null;
   county_state: string | null;
@@ -105,6 +107,18 @@ export async function fetchLandfills(): Promise<Landfill[]> {
     } catch {
       // Fall back to direct ArcGIS when backend cache is unavailable.
     }
+    return fetchLandfillsFromArcGIS();
   }
-  return fetchLandfillsFromArcGIS();
+  // Live ArcGIS by default, but fall back to the backend's cached copy if the
+  // upstream is unreachable or rate-limited — a transient blip upstream should
+  // not blank the whole dashboard when a good cached copy is available.
+  try {
+    return await fetchLandfillsFromArcGIS();
+  } catch (err) {
+    try {
+      return await fetchLandfillsFromBackend();
+    } catch {
+      throw err; // surface the original upstream error, not the fallback's
+    }
+  }
 }

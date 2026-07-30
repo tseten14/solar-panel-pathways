@@ -93,6 +93,77 @@ def test_merge_requires_two_ids(client):
     assert res.status_code == 400
 
 
+def _manual_square(client, lng: float, lat: float, half: float = 0.0002) -> int:
+    res = client.post(
+        "/detections/manual",
+        json={
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [lng - half, lat - half],
+                    [lng + half, lat - half],
+                    [lng + half, lat + half],
+                    [lng - half, lat + half],
+                    [lng - half, lat - half],
+                ]],
+            }
+        },
+    )
+    assert res.status_code == 200, res.text
+    return res.json()["properties"]["id"]
+
+
+def test_merge_overlapping_detections(client):
+    # Two squares offset by half their width — they genuinely overlap, so the union
+    # is a single polygon and the merge should succeed.
+    a = _manual_square(client, -118.2500, 34.0500)
+    b = _manual_square(client, -118.2498, 34.0500)
+
+    res = client.post("/detections/merge", json={"ids": [a, b]})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["merged_id"] == min(a, b)
+    assert body["rejected_ids"] == [max(a, b)]
+    # Merged footprint must be larger than either input square.
+    assert body["area_m2"] > 0
+
+    # The absorbed row is rejected; the survivor stays pending.
+    listing = client.get("/detections").json()["features"]
+    by_id = {f["properties"]["id"]: f["properties"]["status"] for f in listing}
+    assert by_id[min(a, b)] == "pending"
+    assert by_id[max(a, b)] == "rejected"
+
+
+def test_merge_disjoint_detections_rejected(client):
+    # Far apart — the union is a MultiPolygon, which must be refused rather than
+    # silently discarding one of the two real footprints.
+    a = _manual_square(client, -118.2500, 34.0500)
+    b = _manual_square(client, -118.2000, 34.0900)
+
+    res = client.post("/detections/merge", json={"ids": [a, b]})
+    assert res.status_code == 400
+    assert "overlap" in res.json()["detail"].lower()
+
+
+def test_erase_circle_rejects_detections_inside(client):
+    inside = _manual_square(client, -118.2500, 34.0500)
+    outside = _manual_square(client, -118.2000, 34.0900)
+
+    res = client.post(
+        "/detections/erase-circle",
+        json={"center": [34.0500, -118.2500], "radius_m": 100},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["erased"] == 1
+    assert body["ids"] == [inside]
+
+    listing = client.get("/detections").json()["features"]
+    by_id = {f["properties"]["id"]: f["properties"]["status"] for f in listing}
+    assert by_id[inside] == "rejected"
+    assert by_id[outside] == "pending"
+
+
 def test_coverage_and_stats_empty(client):
     res = client.get("/coverage")
     assert res.status_code == 200

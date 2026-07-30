@@ -1,7 +1,7 @@
 # Solar-panel scan/review-queue API. Ported from the building-footprint reference's
 # review_api.py live-scan subsystem, retargeted for solar arrays and simplified to a
-# single in-process backend (this app already imports sam3_service/yolo_service
-# directly — no second "model host" service to HTTP-call, unlike the reference).
+# single in-process backend (this app imports sam3_service directly — no second
+# "model host" service to HTTP-call, unlike the reference).
 from __future__ import annotations
 
 import io
@@ -20,7 +20,6 @@ from shapely.geometry import mapping, shape
 import solar_store
 from sam3_service import run_detection as sam3_run_detection
 from solar_scan_config import ESRI_EXPORT_URL, scan_max_px, scan_target_mpp
-from yolo_service import run_yolo_detection
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -72,11 +71,9 @@ def _circle_bbox(lat: float, lng: float, radius_m: float) -> tuple[float, float,
     return (lng - dlng, lat - dlat, lng + dlng, lat + dlat)
 
 
-# --- In-process model dispatch + georeferencing --------------------------------
+# --- In-process inference + georeferencing --------------------------------
 
-def _run_engine(engine: str, image_bytes: bytes) -> dict:
-    if engine == "yolo":
-        return run_yolo_detection(image_bytes, mode="satellite")
+def _run_engine(image_bytes: bytes) -> dict:
     return sam3_run_detection(image_bytes, mode="satellite")
 
 
@@ -166,7 +163,7 @@ def _best_feature_at_click(features: list[dict], lat: float, lng: float, max_dis
 
 class ScanIn(BaseModel):
     bbox: list[float]  # [west, south, east, north]
-    model: str = "sam3"  # sam3 | yolo
+    model: str = "sam3"  # SAM 3 is the only engine
     center: list[float] | None = None  # [lat, lng]
     radius_m: float | None = None
     auto_confirm: bool = False
@@ -207,8 +204,8 @@ async def scan(body: ScanIn) -> dict:
     west, south, east, north = body.bbox
     if west >= east or south >= north:
         raise HTTPException(400, "bbox must have west < east and south < north")
-    if body.model not in ("sam3", "yolo"):
-        raise HTTPException(400, "model must be sam3 or yolo")
+    if body.model != "sam3":
+        raise HTTPException(400, "model must be sam3")
 
     w, h = _bbox_image_size((west, south, east, north))
     try:
@@ -217,7 +214,7 @@ async def scan(body: ScanIn) -> dict:
         raise HTTPException(502, f"could not fetch satellite imagery: {e}") from e
 
     try:
-        result = _run_engine(body.model, img)
+        result = _run_engine(img)
         raw_features = _to_geojson_features(result, (west, south, east, north), body.model)
     except Exception as e:
         raise HTTPException(500, f"{body.model} failed: {e}") from e
@@ -278,7 +275,7 @@ async def paint(body: PaintIn) -> dict:
         raise HTTPException(502, f"could not fetch satellite imagery: {e}") from e
 
     try:
-        result = _run_engine("sam3", img)
+        result = _run_engine(img)
         features = _to_geojson_features(result, bbox, "sam3")
     except Exception as e:
         raise HTTPException(500, f"paint failed: {e}") from e
