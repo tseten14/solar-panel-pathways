@@ -96,7 +96,11 @@ export default function SolarReviewQueue({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  });
+    // `advance` is re-created each render, so it is intentionally not a dep —
+    // listing it would defeat the point. The deps below are the values the
+    // handler actually reads, which is enough to keep it from going stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, active, lastAction, selectedIds, onConfirm, onReject, onRestore, onAcceptAll, onMerge]);
 
   const total = stats?.total ?? 0;
   const reviewed = (stats?.confirmed ?? 0) + (stats?.rejected ?? 0);

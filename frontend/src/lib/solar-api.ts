@@ -1,3 +1,13 @@
+/**
+ * Fetches U.S. utility-scale solar farm data from the USGS Photovoltaic
+ * Database (USPVDB) — roughly 6,600 installations.
+ *
+ * Beyond simple totals, this pulls two things that matter for predicting waste:
+ *   - the YEAR each solar farm was built, because panels retire about 30 years
+ *     later, so build dates tell you when the waste arrives; and
+ *   - the PANEL CHEMISTRY, because silicon panels contain lead while thin-film
+ *     panels contain cadmium, and that changes how they must be disposed of.
+ */
 import { queryArcGISFeatures } from "@/lib/arcgis";
 import type { SolarCohort, SolarFacility, SolarStateStats, SolarTechMix } from "@/types/solar";
 

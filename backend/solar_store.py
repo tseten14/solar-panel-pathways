@@ -95,6 +95,9 @@ def persist_scan(
         for r in rows
     ]
     tree = STRtree([e["geom"] for e in existing]) if existing else None
+    # Detections accepted during this scan. Kept as a plain list because it is
+    # short; rebuilding the STRtree per insert was O(n^2) over a growing array.
+    added: list = []
     dedup_threshold = dedup_iou()
 
     counts = {"pending": 0, "confirmed": 0, "skipped": 0, "by_reason": {}}
@@ -123,25 +126,32 @@ def persist_scan(
             m = geometry_metrics(f["geometry"])
             reason = _auto_filter_reason(m, props.get("filter_reason"))
 
-            if reason is None and existing:
-                geom_m = project_to_utm(geom, scan_epsg)
-                hits = tree.query(geom_m, predicate="intersects") if tree is not None else []
-                for j in hits:
-                    e = existing[int(j)]
-                    inter = geom_m.intersection(e["geom"]).area
-                    if inter <= 0:
-                        continue
-                    iou = inter / (geom_m.area + e["geom"].area - inter)
-                    if iou >= dedup_threshold:
-                        reason = "duplicate"
-                        break
-                if reason is None:
-                    for e in existing:
-                        if e["geom"].contains(geom_m.representative_point()) or geom_m.contains(
-                            e["geom"].representative_point()
-                        ):
+            # Project once and reuse — this same shape is needed again below when
+            # the detection is kept and added to the in-scan dedup list.
+            geom_m = project_to_utm(geom, scan_epsg)
+
+            if reason is None:
+                # Candidates come from two places: detections already in the DB
+                # (indexed once in `tree`) and ones added earlier in this same
+                # scan (`added`, normally a handful). Checking both avoids
+                # rebuilding the spatial index on every insert.
+                candidates = [existing[int(j)]["geom"] for j in tree.query(geom_m, predicate="intersects")] if tree is not None else []
+                candidates.extend(g for g in added if g.intersects(geom_m))
+
+                for other in candidates:
+                    inter = geom_m.intersection(other).area
+                    if inter > 0:
+                        iou = inter / (geom_m.area + other.area - inter)
+                        if iou >= dedup_threshold:
                             reason = "duplicate"
                             break
+                    # Nested/offset masks over the same array can score a low IoU,
+                    # so also treat "one contains the other's centre" as a dupe.
+                    if other.contains(geom_m.representative_point()) or geom_m.contains(
+                        other.representative_point()
+                    ):
+                        reason = "duplicate"
+                        break
 
             lng_c, lat_c = geom.centroid.x, geom.centroid.y
             if reason:
@@ -195,9 +205,7 @@ def persist_scan(
                 }
             )
             counts[status] += 1
-            geom_m = project_to_utm(geom, scan_epsg)
-            existing.append({"id": det_id, "geom": geom_m})
-            tree = STRtree([e["geom"] for e in existing])
+            added.append(geom_m)
 
     return {"scan_id": scan_id, "ids": ids, "counts": counts}
 
@@ -250,13 +258,13 @@ def erase_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius
     from solar_geometry import project_to_utm
 
     center_m = project_to_utm(Point(clng, clat), epsg)
-    square_m = box(
-        center_m.x - radius_m, center_m.y - radius_m, center_m.x + radius_m, center_m.y + radius_m
-    )
+    # Straight-line distance, not a bounding box: the UI draws a circle of this
+    # radius, and a square's corners reach radius*sqrt(2) — erasing by box would
+    # silently delete detections up to ~41% further out than the user selected.
     erase_ids = [
         int(r["id"])
         for r in rows
-        if square_m.contains(project_to_utm(Point(r["lng"], r["lat"]), epsg))
+        if center_m.distance(project_to_utm(Point(r["lng"], r["lat"]), epsg)) <= radius_m
     ]
     if erase_ids:
         set_status_batch(con, erase_ids, "rejected")

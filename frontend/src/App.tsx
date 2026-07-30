@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
@@ -6,13 +7,17 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import Dashboard from "./pages/Dashboard";
-import LandfillMap from "./pages/LandfillMap";
-import TradeFlows from "./pages/TradeFlows";
-import MLPredictions from "./pages/MLPredictions";
-import DataTable from "./pages/DataTable";
-import NotFound from "./pages/NotFound";
-import SolarMap from "./pages/SolarMap";
+import { DataLoadingState } from "@/components/DataLoadingState";
+
+// Each page is loaded only when you first visit it. Without this, opening the
+// Dashboard would also download the map and charting libraries it never uses.
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const LandfillMap = lazy(() => import("./pages/LandfillMap"));
+const TradeFlows = lazy(() => import("./pages/TradeFlows"));
+const MLPredictions = lazy(() => import("./pages/MLPredictions"));
+const DataTable = lazy(() => import("./pages/DataTable"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const SolarMap = lazy(() => import("./pages/SolarMap"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +37,7 @@ const App = () => (
       <BrowserRouter>
         <AppLayout>
           <ErrorBoundary>
+            <Suspense fallback={<div className="p-6"><DataLoadingState message="Loading…" /></div>}>
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/map" element={<LandfillMap />} />
@@ -41,6 +47,7 @@ const App = () => (
               <Route path="/solar-map" element={<SolarMap />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </Suspense>
           </ErrorBoundary>
         </AppLayout>
       </BrowserRouter>

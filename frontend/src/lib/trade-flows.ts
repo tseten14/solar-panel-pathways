@@ -1,3 +1,14 @@
+/**
+ * Estimates where retired solar panels are likely to travel for disposal.
+ *
+ * The logic: states with lots of solar but few open landfills will probably
+ * need to ship panels elsewhere, and the likeliest destination is a nearby
+ * state with spare capacity.
+ *
+ * IMPORTANT: these are ESTIMATES, not observed shipments. Nobody publishes a
+ * register of actual solar-panel waste movements, so this models what is
+ * plausible from capacity and distance. The UI labels it as modelled.
+ */
 import type { Landfill } from "@/types/landfill";
 import type { SolarStateStats } from "@/types/solar";
 import { haversineDistanceMiles } from "@/lib/geo";

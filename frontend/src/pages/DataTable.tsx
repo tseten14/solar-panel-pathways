@@ -1,3 +1,8 @@
+/**
+ * The same landfill data as the map, in a sortable, searchable table —
+ * for when you want to read or export the numbers rather than see locations.
+ * "Export CSV" downloads the current list for use in Excel or similar.
+ */
 import { useState, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";

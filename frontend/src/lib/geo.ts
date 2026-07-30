@@ -1,3 +1,11 @@
+/**
+ * Small geography helpers — mainly "how far apart are these two points on
+ * Earth?" and "which landfill is closest to here?".
+ *
+ * Distances use the haversine formula, which accounts for the planet's
+ * curvature; treating the map as flat would be noticeably wrong across a
+ * country-sized area.
+ */
 import type { Landfill } from "@/types/landfill";
 
 const EARTH_RADIUS_MILES = 3958.7613;

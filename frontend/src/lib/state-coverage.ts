@@ -10,7 +10,7 @@
  */
 import type { Landfill } from "@/types/landfill";
 import type { SolarCohort, SolarStateStats } from "@/types/solar";
-import { projectWaste, tonnesRetiringWithin } from "@/lib/pv-waste";
+import { projectWaste } from "@/lib/pv-waste";
 
 export interface StateCoverage {
   state: string;
@@ -125,14 +125,36 @@ export function computeStateCoverage(
     landfillsByState.set(landfill.state, list);
   }
 
+  // Bucket the cohorts by state once up front. projectWaste() filters the full
+  // cohort array on every call, so projecting per-state inside the loop below
+  // would rescan all ~560 rows for each of the ~50 states.
+  const thisYear = new Date().getFullYear();
+  const cohortsGrouped = new Map<string, SolarCohort[]>();
+  for (const c of cohorts) {
+    const list = cohortsGrouped.get(c.state) ?? [];
+    list.push(c);
+    cohortsGrouped.set(c.state, list);
+  }
+  const cohortsByState = new Map(
+    [...cohortsGrouped].map(([state, rows]) => [
+      state,
+      projectWaste(rows, { horizonYears: WASTE_HORIZON_YEARS }),
+    ]),
+  );
+
   return solarStats
     .map((stats) => {
       const landfillsInState = landfillsByState.get(stats.state) ?? [];
       const openInState = landfillsInState.filter(isOpenLandfill);
       const landfillCount = openInState.length;
       const remainingCapacityTons = computeRemainingCapacityTons(openInState);
-      const projectedWasteTonnes = tonnesRetiringWithin(cohorts, WASTE_HORIZON_YEARS, stats.state);
-      const curve = projectWaste(cohorts, { state: stats.state, horizonYears: WASTE_HORIZON_YEARS });
+      // One projection per state, reused for both the total and the peak year.
+      // (tonnesRetiringWithin() projects internally, so calling it as well would
+      // walk the whole cohort list a second time for every state.)
+      const curve = cohortsByState.get(stats.state) ?? [];
+      const projectedWasteTonnes = curve
+        .filter((p) => p.year >= thisYear && p.year <= thisYear + WASTE_HORIZON_YEARS)
+        .reduce((sum, p) => sum + p.retiringTonnes, 0);
       const peak = curve.reduce<{ year: number; t: number } | null>(
         (best, pt) => (pt.retiringTonnes > (best?.t ?? 0) ? { year: pt.year, t: pt.retiringTonnes } : best),
         null,

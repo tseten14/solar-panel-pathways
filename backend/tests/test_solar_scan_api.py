@@ -195,3 +195,32 @@ def test_export_gpkg_after_confirm(client):
     res = client.get("/detections/export/confirmed.csv")
     assert res.status_code == 200
     assert "text/csv" in res.headers["content-type"]
+
+
+def test_erase_circle_spares_detections_outside_the_radius(client):
+    """
+    The UI draws a circle of radius R, so erase must delete a circle — not the
+    bounding square, whose corners reach R*sqrt(2) and would silently remove
+    detections up to ~41% further out than the user saw.
+    """
+    import math
+
+    lat, lng, radius_m = 34.0500, -118.2500, 300.0
+    # Place a detection diagonally at ~0.9 * R * sqrt(2): outside the circle,
+    # but inside the square that a naive bbox check would use.
+    offset_m = radius_m * 0.9
+    dlat = offset_m / 111_320.0
+    dlng = offset_m / (111_320.0 * math.cos(math.radians(lat)))
+    corner = _manual_square(client, lng + dlng, lat + dlat, half=0.00002)
+    centre = _manual_square(client, lng, lat, half=0.00002)
+
+    res = client.post(
+        "/detections/erase-circle", json={"center": [lat, lng], "radius_m": radius_m}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["ids"] == [centre], "only the detection inside the circle should be erased"
+
+    listing = client.get("/detections").json()["features"]
+    by_id = {f["properties"]["id"]: f["properties"]["status"] for f in listing}
+    assert by_id[centre] == "rejected"
+    assert by_id[corner] == "pending", "diagonal detection is outside the circle and must survive"

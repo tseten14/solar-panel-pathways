@@ -1,3 +1,10 @@
+/**
+ * Talks to ArcGIS map servers — the system EPA and USGS publish their data on.
+ *
+ * These servers cap how many records they return per request (2,000 here), so
+ * asking for "all landfills" needs several round-trips. This file hides that:
+ * callers ask once and get the complete list back, with the paging handled.
+ */
 const PAGE_SIZE = 2000;
 
 export interface ArcGISFeature<T> {

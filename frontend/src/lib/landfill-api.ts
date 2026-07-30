@@ -1,3 +1,15 @@
+/**
+ * Fetches the U.S. landfill list from the EPA's Landfill Methane Outreach
+ * Program (LMOP) — roughly 2,300 municipal solid waste sites.
+ *
+ * Two routes to the same data: straight from EPA's live server (the default),
+ * or from our own backend's cached copy. If the live server is unreachable we
+ * fall back to the cache rather than showing an empty dashboard.
+ *
+ * Note what is NOT here: whether a landfill accepts solar panels, and what it
+ * charges. No public data source publishes either, so the app reports them as
+ * unsurveyed rather than guessing.
+ */
 import { queryArcGISFeatures } from "@/lib/arcgis";
 import type { Landfill } from "@/types/landfill";
 

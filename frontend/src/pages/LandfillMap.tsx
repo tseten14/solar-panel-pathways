@@ -1,3 +1,11 @@
+/**
+ * Full-screen map of every EPA-tracked landfill, filterable by state,
+ * ownership and open/closed status.
+ *
+ * Clicking a site shows what the EPA actually reports about it: how much waste
+ * is already buried there and its permitted capacity. Optionally overlays the
+ * solar farms in a chosen state, to show supply and disposal side by side.
+ */
 import { useState, useMemo } from "react";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import type { Landfill } from "@/types/landfill";

@@ -1,3 +1,10 @@
+/**
+ * Map of estimated interstate journeys for retired solar panels: lines run
+ * from states short on disposal capacity to states with room to spare.
+ *
+ * These routes are modelled from capacity and distance, not observed shipment
+ * records — see lib/trade-flows.ts for how they are derived.
+ */
 import React, { useMemo } from "react";
 import { MapContainer, TileLayer, Polyline, CircleMarker } from "react-leaflet";
 import { Badge } from "@/components/ui/badge";

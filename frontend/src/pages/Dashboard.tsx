@@ -1,3 +1,10 @@
+/**
+ * The landing page: headline numbers for the whole country.
+ *
+ * Shows how many landfills exist and how many are still open (EPA), how much
+ * solar is installed (USGS), and a national map. Also hosts the "Solar AI"
+ * button, which answers questions using only these figures.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { Building2, MapPin, Sun, ArrowRightLeft } from "lucide-react";
 import { StatCard } from "@/components/StatCard";
