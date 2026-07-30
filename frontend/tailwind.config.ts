@@ -14,7 +14,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ["Inter", "sans-serif"],
+        sans: ["Plus Jakarta Sans", "sans-serif"],
+        brand: ["Space Grotesk", "Plus Jakarta Sans", "sans-serif"],
+        display: ["Space Grotesk", "Plus Jakarta Sans", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"],
       },
       colors: {
@@ -61,14 +63,27 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
-        solar: {
-          amber: "hsl(var(--solar-amber))",
-          glow: "hsl(var(--solar-amber-glow))",
-        },
         status: {
           accept: "hsl(var(--status-accept))",
           reject: "hsl(var(--status-reject))",
           conditional: "hsl(var(--status-conditional))",
+        },
+        "on-track": "hsl(var(--on-track))",
+        "at-risk": "hsl(var(--at-risk))",
+        "off-track": "hsl(var(--off-track))",
+        neutral: "hsl(var(--neutral))",
+        highlight: {
+          DEFAULT: "hsl(var(--highlight))",
+          foreground: "hsl(var(--highlight-foreground))",
+        },
+        coral: "hsl(var(--coral))",
+        ocean: "hsl(var(--ocean))",
+        chart: {
+          1: "hsl(var(--chart-1))",
+          2: "hsl(var(--chart-2))",
+          3: "hsl(var(--chart-3))",
+          4: "hsl(var(--chart-4))",
+          5: "hsl(var(--chart-5))",
         },
       },
       borderRadius: {

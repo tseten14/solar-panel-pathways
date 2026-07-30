@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,54 +6,68 @@
 
 @layer base {
   :root {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 92%;
+    /* Dark green/teal "climate-tech cockpit" palette, ported from ndc-data-explorer's
+       .dark theme (this app is dark-only, so its dark values become our :root). */
+    --background: 150 17% 11%;
+    --foreground: 150 6% 92%;
 
-    --card: 217 33% 12%;
-    --card-foreground: 210 40% 92%;
+    --card: 150 14% 15%;
+    --card-foreground: 150 6% 92%;
 
-    --popover: 217 33% 12%;
-    --popover-foreground: 210 40% 92%;
+    --popover: 150 14% 15%;
+    --popover-foreground: 150 6% 92%;
 
-    --primary: 43 96% 56%;
-    --primary-foreground: 222 47% 6%;
+    --primary: 152 34% 44%;
+    --primary-foreground: 150 8% 98%;
 
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 92%;
+    --secondary: 150 11% 22%;
+    --secondary-foreground: 150 6% 92%;
 
-    --muted: 217 33% 15%;
-    --muted-foreground: 215 20% 55%;
+    --muted: 150 11% 22%;
+    --muted-foreground: 150 8% 58%;
 
-    --accent: 43 96% 56%;
-    --accent-foreground: 222 47% 6%;
+    --accent: 152 30% 34%;
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 4 72% 56%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 217 33% 20%;
-    --input: 217 33% 20%;
-    --ring: 43 96% 56%;
+    --border: 150 11% 24%;
+    --input: 150 11% 24%;
+    --ring: 152 32% 40%;
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
-    --sidebar-background: 217 33% 10%;
-    --sidebar-foreground: 215 20% 65%;
-    --sidebar-primary: 43 96% 56%;
-    --sidebar-primary-foreground: 222 47% 6%;
-    --sidebar-accent: 217 33% 15%;
-    --sidebar-accent-foreground: 210 40% 92%;
-    --sidebar-border: 217 33% 18%;
-    --sidebar-ring: 43 96% 56%;
+    --sidebar-background: 150 17% 14%;
+    --sidebar-foreground: 150 6% 90%;
+    --sidebar-primary: 152 34% 44%;
+    --sidebar-primary-foreground: 150 14% 10%;
+    --sidebar-accent: 150 12% 21%;
+    --sidebar-accent-foreground: 150 6% 92%;
+    --sidebar-border: 150 12% 24%;
+    --sidebar-ring: 152 32% 38%;
 
-    /* Custom tokens */
-    --solar-amber: 43 96% 56%;
-    --solar-amber-glow: 38 92% 50%;
-    --status-accept: 142 71% 45%;
-    --status-reject: 0 72% 51%;
-    --status-conditional: 48 96% 53%;
-    --navy-deep: 222 47% 4%;
-    --glass-bg: 217 33% 12%;
-    --glass-border: 217 33% 22%;
+    /* Climate-tech accents: warm amber for highlights/CTAs, coral for alerts, ocean blue */
+    --highlight: 38 92% 56%;
+    --highlight-foreground: 35 60% 12%;
+    --coral: 12 80% 64%;
+    --ocean: 202 70% 56%;
+
+    --on-track: 152 40% 52%;
+    --at-risk: 38 92% 50%;
+    --off-track: 4 72% 56%;
+    --neutral: 150 8% 60%;
+
+    --chart-1: 152 32% 28%;
+    --chart-2: 38 92% 50%;
+    --chart-3: 4 72% 56%;
+    --chart-4: 164 26% 36%;
+    --chart-5: 150 10% 68%;
+
+    /* Kept for existing accept/reject/conditional badges (MLPredictions, DataTable) */
+    --status-accept: 152 40% 52%;
+    --status-reject: 4 72% 56%;
+    --status-conditional: 38 92% 50%;
   }
 }
 
@@ -63,21 +77,28 @@
   }
   body {
     @apply bg-background text-foreground font-sans;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Plus Jakarta Sans', sans-serif;
   }
   code, .font-mono {
     font-family: 'JetBrains Mono', monospace;
+  }
+  .font-brand {
+    font-family: 'Space Grotesk', 'Plus Jakarta Sans', sans-serif;
   }
 }
 
 @layer components {
   .glass-card {
-    @apply bg-card/60 backdrop-blur-xl border border-border/50 rounded-lg;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    @apply bg-card/60 backdrop-blur-xl border border-border/50 rounded-lg transition-all duration-200;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+  .glass-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px -8px hsl(var(--primary) / 0.28), 0 0 0 1px hsl(var(--ring) / 0.18);
   }
   .glass-card-highlight {
     @apply glass-card;
-    box-shadow: 0 8px 32px rgba(245, 158, 11, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    box-shadow: 0 8px 32px hsl(var(--primary) / 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.04);
   }
   .stat-value {
     @apply text-3xl font-bold font-mono tracking-tight;
@@ -97,30 +118,59 @@
   .map-container {
     @apply w-full h-full rounded-lg overflow-hidden;
   }
+  /* Faint dot-grid texture — referenced as an ambient background layer on
+     Solar Detections; ported from ndc-data-explorer's dash-grid-pattern. */
+  .grid-bg {
+    background-image: radial-gradient(hsl(var(--foreground) / 0.05) 1px, transparent 1px);
+    background-size: 26px 26px;
+  }
+  /* Masked-gradient border accent for premium cards, ported from the reference. */
+  .gradient-border-card {
+    position: relative;
+    background-clip: padding-box;
+  }
+  .gradient-border-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      135deg,
+      hsl(152 50% 45% / 0.35),
+      hsl(202 60% 50% / 0.12) 40%,
+      transparent 60%,
+      hsl(38 90% 55% / 0.18)
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
 }
 
-/* Leaflet overrides for dark theme */
+/* Leaflet overrides for the dark green theme */
 .leaflet-container {
-  background: hsl(222 47% 4%) !important;
+  background: hsl(150 17% 11%) !important;
 }
 .leaflet-popup-content-wrapper {
-  background: hsl(217 33% 12%) !important;
-  color: hsl(210 40% 92%) !important;
-  border: 1px solid hsl(217 33% 22%) !important;
-  border-radius: 0.75rem !important;
+  background: hsl(150 14% 15%) !important;
+  color: hsl(150 6% 92%) !important;
+  border: 1px solid hsl(150 11% 24%) !important;
+  border-radius: 0.5rem !important;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
 }
 .leaflet-popup-tip {
-  background: hsl(217 33% 12%) !important;
-  border: 1px solid hsl(217 33% 22%) !important;
+  background: hsl(150 14% 15%) !important;
+  border: 1px solid hsl(150 11% 24%) !important;
 }
 .leaflet-popup-close-button {
-  color: hsl(215 20% 55%) !important;
+  color: hsl(150 8% 58%) !important;
 }
 .leaflet-control-zoom a {
-  background: hsl(217 33% 12%) !important;
-  color: hsl(210 40% 92%) !important;
-  border-color: hsl(217 33% 20%) !important;
+  background: hsl(150 14% 15%) !important;
+  color: hsl(150 6% 92%) !important;
+  border-color: hsl(150 11% 24%) !important;
 }
 
 /* Scrollbar */
@@ -128,9 +178,9 @@
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: hsl(222 47% 6%);
+  background: hsl(150 17% 11%);
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(217 33% 25%);
+  background: hsl(150 11% 28%);
   border-radius: 3px;
 }
