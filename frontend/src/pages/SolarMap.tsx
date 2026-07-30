@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { MapPin, Eye, ScanSearch, Square, Grid2x2, Eraser, Trash2 } from "lucide-react";
 import { GeoAiMark } from "@/components/GeoAiMark";
-import SolarScanMap, { type ScanTool } from "@/components/SolarScanMap";
+import SolarScanMap, { scanBbox, type ScanTool } from "@/components/SolarScanMap";
 import SolarReviewQueue from "@/components/SolarReviewQueue";
 import { fetchBackendHealth, type BackendHealth } from "@/lib/apiHealth";
 import {
@@ -68,12 +68,6 @@ const Index = () => {
     setFlyTrigger((t) => t + 1);
   }, []);
 
-  const bboxAround = (lat: number, lng: number): [number, number, number, number] => {
-    const dLat = radiusM / 111_320;
-    const dLng = radiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
-    return [lng - dLng, lat - dLat, lng + dLng, lat + dLat];
-  };
-
   const handleMapClick = useCallback(
     async (lat: number, lng: number) => {
       if (busy) return;
@@ -111,7 +105,7 @@ const Index = () => {
       for (let i = 0; i < squares.length; i++) {
         const [lat, lng] = squares[i];
         setStatus(`Scanning square ${i + 1} of ${squares.length}…`);
-        const result = await scanArea(bboxAround(lat, lng), "sam3", {
+        const result = await scanArea(scanBbox([lat, lng], radiusM), "sam3", {
           center: [lat, lng],
           radius_m: radiusM,
         });

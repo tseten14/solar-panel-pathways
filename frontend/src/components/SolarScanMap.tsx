@@ -1,17 +1,27 @@
-// react-leaflet map for the solar-panel review-queue workflow: place one or many
-// scan squares, render color-coded detection polygons (pending/confirmed/rejected),
-// multi-select for merging, an erase circle, and fly-to on selection. Declarative
-// react-leaflet scales better to the many independently-styled overlay layers here
-// than an imperative raw-Leaflet API would.
-import { useEffect, useMemo, useRef } from "react";
+/**
+ * The interactive map on the Solar Detections page.
+ *
+ * Shape matters here, because the shape you see is the area that is acted on:
+ *   - SCAN areas are drawn as SQUARES, because a scan fetches a square
+ *     bounding box of satellite imagery. Drawing a circle used to understate
+ *     it — the corners of the real scan fell outside the circle shown.
+ *   - The ERASE tool is drawn as a CIRCLE, because it deletes everything
+ *     within a straight-line radius of the click.
+ *
+ * A faint preview follows the cursor so you can see where the square (or
+ * circle) will land before committing.
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
   GeoJSON as LeafletGeoJSON,
   Circle,
+  Rectangle,
   useMapEvents,
   useMap,
 } from "react-leaflet";
+import type { LatLngBoundsExpression, LatLngTuple } from "leaflet";
 import type { Layer, LeafletMouseEvent, PathOptions } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { SolarDetectionFeature } from "@/lib/solar-scan-api";
@@ -39,10 +49,57 @@ interface SolarScanMapProps {
   flyToTrigger: number;
 }
 
-function ClickCatcher({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) {
+/**
+ * Corners of the square that a scan of this radius will actually cover.
+ * Mirrors the bbox the page sends to POST /scan, so the drawn square and the
+ * fetched imagery are the same region.
+ */
+function squareOffsets(lat: number, radiusM: number) {
+  return {
+    dLat: radiusM / 111_320,
+    dLng: radiusM / (111_320 * Math.cos((lat * Math.PI) / 180)),
+  };
+}
+
+export function squareBounds(center: LatLngTuple, radiusM: number): LatLngBoundsExpression {
+  const [lat, lng] = center;
+  const { dLat, dLng } = squareOffsets(lat, radiusM);
+  return [
+    [lat - dLat, lng - dLng],
+    [lat + dLat, lng + dLng],
+  ];
+}
+
+/**
+ * The same square as squareBounds(), expressed as the [west, south, east, north]
+ * bbox that POST /scan expects. Sharing one definition keeps the square drawn on
+ * screen identical to the imagery the backend fetches.
+ */
+export function scanBbox(
+  center: LatLngTuple,
+  radiusM: number,
+): [number, number, number, number] {
+  const [lat, lng] = center;
+  const { dLat, dLng } = squareOffsets(lat, radiusM);
+  return [lng - dLng, lat - dLat, lng + dLng, lat + dLat];
+}
+
+function ClickCatcher({
+  onMapClick,
+  onHover,
+}: {
+  onMapClick: (lat: number, lng: number) => void;
+  onHover: (pos: LatLngTuple | null) => void;
+}) {
   useMapEvents({
     click(e: LeafletMouseEvent) {
       onMapClick(e.latlng.lat, e.latlng.lng);
+    },
+    mousemove(e: LeafletMouseEvent) {
+      onHover([e.latlng.lat, e.latlng.lng]);
+    },
+    mouseout() {
+      onHover(null);
     },
   });
   return null;
@@ -87,6 +144,7 @@ export default function SolarScanMap({
   );
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const [hoverPos, setHoverPos] = useState<LatLngTuple | null>(null);
 
   const styleFor = useMemo(
     () =>
@@ -113,7 +171,9 @@ export default function SolarScanMap({
     });
   };
 
-  const squareColor = tool === "erase" ? "#ff6b4a" : "#ffd166";
+  const isErase = tool === "erase";
+  const SCAN_COLOR = "#ffd166";  // amber — areas queued for scanning
+  const ERASE_COLOR = "#ff6b4a"; // coral — the delete radius
 
   return (
     <MapContainer center={[35.3833, -119.0187]} zoom={13} className="h-full w-full">
@@ -122,16 +182,34 @@ export default function SolarScanMap({
         attribution="Esri, Maxar, Earthstar Geographics"
         maxZoom={20}
       />
-      <ClickCatcher onMapClick={onMapClick} />
+      <ClickCatcher onMapClick={onMapClick} onHover={setHoverPos} />
       <FlyToFocused detections={detections} focusedId={focusedId} flyToTrigger={flyToTrigger} />
+      {/* Placed scan areas — squares, matching the bbox each scan fetches. */}
       {squares.map(([lat, lng], i) => (
-        <Circle
+        <Rectangle
           key={`${lat},${lng},${i}`}
-          center={[lat, lng]}
-          radius={radiusM}
-          pathOptions={{ color: squareColor, weight: 2, dashArray: "6 6", fillOpacity: 0.05 }}
+          bounds={squareBounds([lat, lng], radiusM)}
+          // Always the scan colour: these are queued scan areas, and tinting them
+          // red in erase mode wrongly implied they were about to be deleted.
+          pathOptions={{ color: SCAN_COLOR, weight: 2, dashArray: "6 6", fillOpacity: 0.05 }}
         />
       ))}
+      {/* Preview under the cursor: square for scanning, circle for erasing. */}
+      {hoverPos &&
+        (isErase ? (
+          <Circle
+            center={hoverPos}
+            radius={radiusM}
+            interactive={false}
+            pathOptions={{ color: ERASE_COLOR, weight: 1.5, dashArray: "4 6", fillOpacity: 0.04 }}
+          />
+        ) : (
+          <Rectangle
+            bounds={squareBounds(hoverPos, radiusM)}
+            interactive={false}
+            pathOptions={{ color: SCAN_COLOR, weight: 1.5, dashArray: "4 6", fillOpacity: 0.04 }}
+          />
+        ))}
       {detections.length > 0 && (
         <LeafletGeoJSON
           // Remount when data OR selection changes — react-leaflet's GeoJSON does not
