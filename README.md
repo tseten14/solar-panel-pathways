@@ -97,6 +97,18 @@ Open [http://localhost:8080](http://localhost:8080).
 
 ## Local development
 
+### Both at once
+
+From the repo root:
+
+```bash
+npm install     # installs the orchestrator and the frontend
+npm run dev     # backend on :8000 + frontend on :8080
+```
+
+Set `API_PORT` to move the backend. To run the two halves separately, use the
+steps below.
+
 ### Backend
 
 ```bash
@@ -142,6 +154,25 @@ Satellite-only workflow backed by SQLite:
 Re-scanning an area is safe — detections overlapping existing ones (IoU ≥ 0.35) are skipped,
 while previously deleted ones stay eligible for re-detection.
 
+### AI agent — chat that drives the map
+
+A chat panel on the right of the Solar Detections page. It does not describe which buttons to
+press; it operates the map itself, and you watch it happen.
+
+- **Scanning** — "scan Bakersfield with a 300 m radius" resolves the place, flies there, drops
+  the square, and runs the same scan the Scan button runs. Multi-square sweeps run in sequence.
+- **Reviewing** — jump to the next pending detection, surface likely false positives, confirm,
+  reject or merge by id or from the current selection.
+- **Navigating and setting up** — fly to a place, place or clear squares, change the radius,
+  switch tool.
+- **Answering** — totals, coverage in km², counts inside the visible area. Figures come from
+  tool calls against SQLite, never from the model's memory.
+
+Anything destructive (erasing in a circle, rejecting detections) and any sweep over three
+squares stops for an explicit confirmation first. Replies stream over SSE, the transcript
+survives a reload, and `Clear` starts a fresh session. Requires `OPENAI_API_KEY`; the panel
+says so plainly if it is missing.
+
 ### Solar-AI
 
 A dashboard Q&A panel over the app's own data. Every number the model may cite is passed in a
@@ -160,8 +191,10 @@ See [`.env.example`](.env.example).
 | Variable | Purpose |
 |----------|---------|
 | `HF_TOKEN` | Download SAM 3 weights from Hugging Face (not needed once cached) |
-| `OPENAI_API_KEY` | Solar-AI panel |
-| `OPENAI_MODEL` | Override the Solar-AI model |
+| `OPENAI_API_KEY` | Solar-AI panel and the map agent |
+| `OPENAI_MODEL` | Override the Solar-AI model (and the agent's, unless `AGENT_MODEL` is set) |
+| `AGENT_MODEL` | Override just the map agent's model |
+| `AGENT_REASONING_EFFORT` | Defaults to `none` — reasoning models reject function tools on `/v1/chat/completions` otherwise |
 | `GOOGLE_MAPS_API_KEY` | Street View proxy endpoint (optional, not used by the scan workflow) |
 | `CORS_ORIGINS` | Allowed browser origins (comma-separated) |
 | `CACHE_REFRESH_SECRET` | Protects `POST /cache/refresh` |

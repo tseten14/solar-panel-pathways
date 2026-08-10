@@ -1,8 +1,15 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
-import { MapPin, Eye, ScanSearch, Square, Grid2x2, Eraser, Trash2 } from "lucide-react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { MapPin, Eye, ScanSearch, Square, Grid2x2, Eraser, Trash2, Sparkles } from "lucide-react";
 import { GeoAiMark } from "@/components/GeoAiMark";
-import SolarScanMap, { scanBbox, type ScanTool } from "@/components/SolarScanMap";
+import SolarScanMap, {
+  scanBbox,
+  type FlyTarget,
+  type MapViewport,
+  type ScanTool,
+} from "@/components/SolarScanMap";
 import SolarReviewQueue from "@/components/SolarReviewQueue";
+import AgentPanel from "@/agent/AgentPanel";
+import type { AgentActions, AgentMapContext, ClientToolOutcome } from "@/agent/types";
 import { fetchBackendHealth, type BackendHealth } from "@/lib/apiHealth";
 import {
   scanArea,
@@ -15,6 +22,12 @@ import {
   type SolarDetectionFeature,
   type DetectionStats,
 } from "@/lib/solar-scan-api";
+
+const MIN_RADIUS_M = 50;
+const MAX_RADIUS_M = 800;
+
+const clampRadius = (value: number) =>
+  Math.round(Math.max(MIN_RADIUS_M, Math.min(MAX_RADIUS_M, value)));
 
 const Index = () => {
   const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
@@ -31,6 +44,13 @@ const Index = () => {
   const [radiusM, setRadiusM] = useState(200);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+
+  const [agentOpen, setAgentOpen] = useState(true);
+  const [flyTarget, setFlyTarget] = useState<FlyTarget | null>(null);
+  const [viewport, setViewport] = useState<MapViewport | null>(null);
+  // The agent runs scans from callbacks that outlive a render, so the guard
+  // against overlapping scans has to read live state, not a captured `busy`.
+  const busyRef = useRef(false);
 
   const refreshData = useCallback(async () => {
     try {
@@ -94,34 +114,65 @@ const Index = () => {
     [tool, radiusM, busy, refreshData, flash],
   );
 
-  const handleScan = useCallback(async () => {
-    if (squares.length === 0 || busy) return;
-    setBusy(true);
-    let totalNew = 0;
-    let totalSkipped = 0;
-    try {
-      // Scan squares one at a time, persisting after each, so partial progress
-      // survives a failure partway through a multi-square run.
-      for (let i = 0; i < squares.length; i++) {
-        const [lat, lng] = squares[i];
-        setStatus(`Scanning square ${i + 1} of ${squares.length}…`);
-        const result = await scanArea(scanBbox([lat, lng], radiusM), "sam3", {
-          center: [lat, lng],
-          radius_m: radiusM,
-        });
-        totalNew += result.stored.pending;
-        totalSkipped += result.stored.skipped;
-        await refreshData();
+  /**
+   * Scan a list of squares in sequence. Shared by the Scan button and the AI
+   * agent so both take exactly the same path — the agent's scans are the real
+   * thing, visible on the map, not a separate server-side shortcut.
+   */
+  const runScanSquares = useCallback(
+    async (
+      list: Array<{ center: [number, number]; radiusM: number }>,
+      onStatus?: (message: string) => void,
+    ): Promise<ClientToolOutcome> => {
+      if (list.length === 0) return { ok: false, error: "No scan area was given." };
+      if (busyRef.current) return { ok: false, error: "A scan is already running." };
+
+      busyRef.current = true;
+      setBusy(true);
+      let found = 0;
+      let skipped = 0;
+      let completed = 0;
+      try {
+        // Scan squares one at a time, persisting after each, so partial progress
+        // survives a failure partway through a multi-square run.
+        for (const { center, radiusM: squareRadius } of list) {
+          const message =
+            list.length > 1
+              ? `Scanning square ${completed + 1} of ${list.length}…`
+              : "Scanning satellite imagery…";
+          setStatus(message);
+          onStatus?.(message);
+          const result = await scanArea(scanBbox(center, squareRadius), "sam3", {
+            center,
+            radius_m: squareRadius,
+          });
+          found += result.stored.pending;
+          skipped += result.stored.skipped;
+          completed += 1;
+          await refreshData();
+        }
+        flash(
+          `Scanned ${completed} square${completed === 1 ? "" : "s"}: ${found} new, ${skipped} skipped.`,
+        );
+        return { ok: true, scanned: completed, found, skipped };
+      } catch (err) {
+        console.error("Scan failed:", err);
+        const message = err instanceof Error ? err.message : "Scan failed";
+        flash(message);
+        return { ok: false, scanned: completed, found, skipped, error: message };
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
       }
-      flash(`Scanned ${squares.length} square${squares.length === 1 ? "" : "s"}: ${totalNew} new, ${totalSkipped} skipped.`);
-      setSquares([]);
-    } catch (err) {
-      console.error("Scan failed:", err);
-      flash(err instanceof Error ? err.message : "Scan failed");
-    } finally {
-      setBusy(false);
-    }
-  }, [squares, radiusM, busy, refreshData, flash]); // eslint-disable-line react-hooks/exhaustive-deps
+    },
+    [refreshData, flash],
+  );
+
+  const handleScan = useCallback(async () => {
+    if (squares.length === 0) return;
+    const outcome = await runScanSquares(squares.map((center) => ({ center, radiusM })));
+    if (outcome.ok) setSquares([]);
+  }, [squares, radiusM, runScanSquares]);
 
   const decide = useCallback(
     async (id: number, action: "confirm" | "reject" | "restore") => {
@@ -165,6 +216,74 @@ const Index = () => {
     }
   }, [selectedIds, busy, refreshData, flash]);
 
+  /** Everything the AI agent is allowed to do to this page. */
+  const agentActions = useMemo<AgentActions>(
+    () => ({
+      flyTo: (lat, lng, zoom) => setFlyTarget({ lat, lng, zoom, nonce: Date.now() }),
+      setScanSquare: (center, radius) => {
+        if (radius != null) setRadiusM(clampRadius(radius));
+        setTool("single");
+        setSquares([center]);
+        setFlyTarget({ lat: center[0], lng: center[1], nonce: Date.now() });
+      },
+      addScanSquares: (list) => {
+        if (list.length === 0) return;
+        setTool("multi");
+        setSquares((prev) => [...prev, ...list]);
+        setFlyTarget({ lat: list[0][0], lng: list[0][1], nonce: Date.now() });
+      },
+      clearScanSquares: () => setSquares([]),
+      setScanRadius: (radius) => setRadiusM(clampRadius(radius)),
+      setMapTool: setTool,
+      focusDetection: (id) => {
+        setSelectedIds([id]);
+        setFocusedId(id);
+        setFlyTrigger((t) => t + 1);
+      },
+      runScan: async (center, radius, onStatus) => {
+        const squareRadius = clampRadius(radius);
+        setTool("single");
+        setRadiusM(squareRadius);
+        setSquares([center]);
+        setFlyTarget({ lat: center[0], lng: center[1], nonce: Date.now() });
+        const outcome = await runScanSquares([{ center, radiusM: squareRadius }], onStatus);
+        if (outcome.ok) setSquares([]);
+        return outcome;
+      },
+      runScanMultiple: async (list, onStatus) => {
+        if (list.length === 0) return { ok: false, error: "No squares to scan." };
+        const clamped = list.map((s) => ({ center: s.center, radiusM: clampRadius(s.radiusM) }));
+        setTool("multi");
+        setSquares(clamped.map((s) => s.center));
+        setFlyTarget({ lat: clamped[0].center[0], lng: clamped[0].center[1], nonce: Date.now() });
+        const outcome = await runScanSquares(clamped, onStatus);
+        if (outcome.ok) setSquares([]);
+        return outcome;
+      },
+      refresh: refreshData,
+    }),
+    [runScanSquares, refreshData],
+  );
+
+  /** What the agent is told about the map at the start of each turn. */
+  const getMapContext = useCallback(
+    (): AgentMapContext => ({
+      mapTool: tool,
+      squares,
+      radiusM,
+      selectedDetectionIds: selectedIds,
+      focusedDetectionId: focusedId,
+      viewportBbox: viewport?.bbox ?? null,
+      mapCenter: viewport?.center ?? null,
+      mapZoom: viewport?.zoom ?? null,
+      queueLength: pending.length,
+      busy,
+      sam3Ready: sam3Available,
+      stats: stats ?? {},
+    }),
+    [tool, squares, radiusM, selectedIds, focusedId, viewport, pending.length, busy, sam3Available, stats],
+  );
+
   const toolHint =
     tool === "erase"
       ? "Click the map to delete every detection inside the circle"
@@ -173,7 +292,10 @@ const Index = () => {
         : "Click the map to place a scan square";
 
   return (
-    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+    // Pin to the viewport minus the 3rem app header, matching LandfillMap. `h-full`
+    // cannot resolve here — <main> takes its height from content, not the screen —
+    // so the columns would grow past the fold and hide the agent's input box.
+    <div className="relative flex h-[calc(100vh-3rem)] min-h-0 w-full flex-col overflow-hidden bg-background">
       <div className="pointer-events-none absolute inset-0 opacity-[0.55] grid-bg" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1100px_circle_at_18%_12%,hsl(var(--primary)/0.16),transparent_45%),radial-gradient(900px_circle_at_85%_22%,hsl(150_70%_45%/0.10),transparent_45%)]" />
 
@@ -194,6 +316,17 @@ const Index = () => {
           <div className="ml-2 hidden rounded-md border border-border/60 bg-background/30 px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted-foreground sm:block">
             SAM 3 · solar panel detection
           </div>
+          {!agentOpen && (
+            <button
+              type="button"
+              onClick={() => setAgentOpen(true)}
+              title="Show the AI agent panel"
+              className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 font-mono text-[10px] tracking-wide text-primary transition-colors hover:bg-primary/20"
+            >
+              <Sparkles className="h-3 w-3" />
+              AI Agent
+            </button>
+          )}
         </div>
       </header>
 
@@ -276,12 +409,14 @@ const Index = () => {
                 onMapClick={handleMapClick}
                 onSelectFeature={handleSelect}
                 flyToTrigger={flyTrigger}
+                flyTarget={flyTarget}
+                onViewportChange={setViewport}
               />
             </div>
           </div>
         </div>
 
-        <div className="w-[340px] shrink-0 overflow-hidden bg-card/30">
+        <div className="w-[300px] shrink-0 overflow-hidden bg-card/30">
           <SolarReviewQueue
             pending={pending}
             stats={stats}
@@ -296,6 +431,16 @@ const Index = () => {
             busy={busy}
           />
         </div>
+
+        {agentOpen && (
+          <div className="w-[340px] shrink-0 overflow-hidden border-l border-border/70">
+            <AgentPanel
+              getMapContext={getMapContext}
+              actions={agentActions}
+              onCollapse={() => setAgentOpen(false)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

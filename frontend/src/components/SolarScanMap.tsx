@@ -37,6 +37,21 @@ const STATUS_COLORS: Record<string, string> = {
 
 export type ScanTool = "single" | "multi" | "erase";
 
+/** A camera move requested from outside the map. `nonce` makes repeat moves to
+ *  the same coordinates take effect. */
+export interface FlyTarget {
+  lat: number;
+  lng: number;
+  zoom?: number;
+  nonce: number;
+}
+
+export interface MapViewport {
+  bbox: [number, number, number, number]; // [west, south, east, north]
+  center: [number, number];
+  zoom: number;
+}
+
 interface SolarScanMapProps {
   detections: SolarDetectionFeature[];
   selectedIds: number[];
@@ -47,6 +62,8 @@ interface SolarScanMapProps {
   onMapClick: (lat: number, lng: number) => void;
   onSelectFeature: (id: number, additive: boolean) => void;
   flyToTrigger: number;
+  flyTarget?: FlyTarget | null;
+  onViewportChange?: (viewport: MapViewport) => void;
 }
 
 /**
@@ -127,6 +144,43 @@ function FlyToFocused({
   return null;
 }
 
+/** Moves the camera when something outside the map (the AI agent) asks it to. */
+function FlyToTarget({ target }: { target: FlyTarget | null | undefined }) {
+  const map = useMap();
+  const lastNonce = useRef(0);
+  useEffect(() => {
+    if (!target || target.nonce === lastNonce.current) return;
+    lastNonce.current = target.nonce;
+    map.flyTo([target.lat, target.lng], target.zoom ?? Math.max(map.getZoom(), 16), {
+      duration: 0.8,
+    });
+  }, [target, map]);
+  return null;
+}
+
+/** Reports what is on screen, so the agent can answer "scan what I'm looking at". */
+function ViewportReporter({ onChange }: { onChange?: (viewport: MapViewport) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!onChange) return;
+    const report = () => {
+      const bounds = map.getBounds();
+      const center = map.getCenter();
+      onChange({
+        bbox: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
+        center: [center.lat, center.lng],
+        zoom: map.getZoom(),
+      });
+    };
+    report();
+    map.on("moveend", report);
+    return () => {
+      map.off("moveend", report);
+    };
+  }, [map, onChange]);
+  return null;
+}
+
 export default function SolarScanMap({
   detections,
   selectedIds,
@@ -137,6 +191,8 @@ export default function SolarScanMap({
   onMapClick,
   onSelectFeature,
   flyToTrigger,
+  flyTarget,
+  onViewportChange,
 }: SolarScanMapProps) {
   const featureCollection = useMemo(
     () => ({ type: "FeatureCollection" as const, features: detections }),
@@ -184,6 +240,8 @@ export default function SolarScanMap({
       />
       <ClickCatcher onMapClick={onMapClick} onHover={setHoverPos} />
       <FlyToFocused detections={detections} focusedId={focusedId} flyToTrigger={flyToTrigger} />
+      <FlyToTarget target={flyTarget} />
+      <ViewportReporter onChange={onViewportChange} />
       {/* Placed scan areas — squares, matching the bbox each scan fetches. */}
       {squares.map(([lat, lng], i) => (
         <Rectangle

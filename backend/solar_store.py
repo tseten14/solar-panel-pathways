@@ -236,7 +236,12 @@ def set_status_batch(con: sqlite3.Connection, det_ids: list[int], status: str) -
     return cur.rowcount
 
 
-def erase_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius_m: float) -> dict:
+def ids_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius_m: float) -> list[int]:
+    """Ids of live (pending or confirmed) detections centred inside a circle.
+
+    Split out from erase_in_circle so the map agent can tell the user what an
+    erase would remove before running it.
+    """
     if radius_m <= 0:
         raise ValueError("radius_m must be positive")
     clat, clng = center
@@ -261,11 +266,15 @@ def erase_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius
     # Straight-line distance, not a bounding box: the UI draws a circle of this
     # radius, and a square's corners reach radius*sqrt(2) — erasing by box would
     # silently delete detections up to ~41% further out than the user selected.
-    erase_ids = [
+    return [
         int(r["id"])
         for r in rows
         if center_m.distance(project_to_utm(Point(r["lng"], r["lat"]), epsg)) <= radius_m
     ]
+
+
+def erase_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius_m: float) -> dict:
+    erase_ids = ids_in_circle(con, center, radius_m)
     if erase_ids:
         set_status_batch(con, erase_ids, "rejected")
     return {"erased": len(erase_ids), "ids": erase_ids}
