@@ -15,6 +15,7 @@ import { useSolarStatsByState } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import { Badge } from "@/components/ui/badge";
 import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
+import { PageContainer, PageHeader } from "@/components/PageHeader";
 import { computeModelledTradeRoutes } from "@/lib/trade-flows";
 import SolarAiPanel from "@/components/dashboard/SolarAiPanel";
 import { buildSolarAiContext } from "@/lib/solar-ai-context";
@@ -73,19 +74,19 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-1">PV Waste Flow Intelligence Overview</p>
-        </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <Badge variant="outline" className="text-xs">EPA LMOP</Badge>
-          <Badge variant="outline" className="text-xs">USGS USPVDB</Badge>
-          <DataFreshnessBadge />
-          <SolarAiPanel factLedger={solarAiContext.fact_ledger} />
-        </div>
-      </div>
+    <PageContainer>
+      <PageHeader
+        title="Dashboard"
+        subtitle="PV waste flow intelligence overview"
+        actions={
+          <>
+            <Badge variant="outline" className="text-xs">EPA LMOP</Badge>
+            <Badge variant="outline" className="text-xs">USGS USPVDB</Badge>
+            <DataFreshnessBadge />
+            <SolarAiPanel factLedger={solarAiContext.fact_ledger} />
+          </>
+        }
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -127,9 +128,11 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="glass-card overflow-hidden" style={{ height: 400 }}>
+      {/* Taller on big screens, where a fixed 400px left the map stranded in
+          whitespace. */}
+      <div className="glass-card h-[400px] overflow-hidden xl:h-[520px]">
         <MiniMap landfills={landfills} />
       </div>
-    </div>
+    </PageContainer>
   );
 }

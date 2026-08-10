@@ -13,6 +13,7 @@ import { useLandfills } from "@/hooks/useLandfills";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
+import { PageContainer, PageHeader } from "@/components/PageHeader";
 import type { Landfill } from "@/types/landfill";
 
 type SortKey = "name" | "state" | "ownership" | "operationalStatus";
@@ -109,22 +110,20 @@ export default function DataTable() {
   }
 
   return (
-    <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Data Table</h1>
-          <div className="flex flex-wrap items-center gap-2 mt-2">
+    <PageContainer>
+      <PageHeader
+        title="Data Table"
+        subtitle={`${landfills.length.toLocaleString()} MSW landfills from EPA LMOP`}
+        actions={
+          <>
             <DataSourceBadge />
             <DataFreshnessBadge />
-          </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            {landfills.length.toLocaleString()} MSW landfills from EPA LMOP
-          </p>
-        </div>
-        <Button onClick={exportCSV} variant="outline" size="sm">
-          <Download className="h-4 w-4 mr-2" /> Export CSV
-        </Button>
-      </div>
+            <Button onClick={exportCSV} variant="outline" size="sm">
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+          </>
+        }
+      />
 
       <div className="relative max-w-sm">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -197,6 +196,6 @@ export default function DataTable() {
           policy is not available from EPA LMOP — marked Unknown.
         </p>
       </div>
-    </div>
+    </PageContainer>
   );
 }

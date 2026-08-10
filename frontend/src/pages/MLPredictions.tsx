@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { AlertTriangle, MapPin, Recycle, CalendarClock, Info } from "lucide-react";
 import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
+import { PageContainer, PageHeader } from "@/components/PageHeader";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarCohorts, useSolarStatsByState, useSolarTechMix } from "@/hooks/useSolarData";
@@ -97,14 +98,20 @@ export default function MLPredictions() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-bold text-foreground">State Coverage Analysis</h1>
+    <PageContainer>
+      <PageHeader
+        title="State Coverage Analysis"
+        subtitle="Disposal capacity vs. modelled panel retirement · EPA LMOP + USGS USPVDB"
+        actions={
+          <>
+            <DataFreshnessBadge />
             <Tooltip>
               <TooltipTrigger asChild>
-                <button type="button" className="text-muted-foreground hover:text-foreground" aria-label="Methodology">
+                <button
+                  type="button"
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                  aria-label="Methodology"
+                >
                   <Info className="h-4 w-4" />
                 </button>
               </TooltipTrigger>
@@ -115,28 +122,24 @@ export default function MLPredictions() {
                 or PV-acceptance data is shown — no public API publishes it.
               </TooltipContent>
             </Tooltip>
-          </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            Disposal capacity vs. modelled panel retirement · EPA LMOP + USGS USPVDB
-          </p>
-          <DataFreshnessBadge />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Analyze state:</span>
-          <Select value={effectiveState} onValueChange={setSelectedState}>
-            <SelectTrigger className="w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="max-h-72">
-              {coverage.map((c) => (
-                <SelectItem key={c.state} value={c.state}>
-                  {c.state}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">State</span>
+              <Select value={effectiveState} onValueChange={setSelectedState}>
+                <SelectTrigger className="w-24">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {coverage.map((c) => (
+                    <SelectItem key={c.state} value={c.state}>
+                      {c.state}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        }
+      />
 
       {stateRow && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -304,6 +307,6 @@ export default function MLPredictions() {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

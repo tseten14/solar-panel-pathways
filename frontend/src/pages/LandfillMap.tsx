@@ -18,6 +18,8 @@ import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarFacilitiesByState } from "@/hooks/useSolarData";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
+import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
+import { MapPageHeader, MapPageShell } from "@/components/PageHeader";
 import { useThemeTokens } from "@/hooks/useThemeTokens";
 import "leaflet/dist/leaflet.css";
 
@@ -77,11 +79,22 @@ export default function LandfillMap() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3rem)]">
+    <MapPageShell>
+      <MapPageHeader
+        title="Landfill Map"
+        subtitle="Every EPA-tracked MSW landfill, with reported waste volumes and capacity"
+        actions={
+          <>
+            <DataSourceBadge />
+            <DataFreshnessBadge />
+          </>
+        }
+      />
+
+      <div className="flex min-h-0 flex-1">
       <div className="w-64 shrink-0 border-r border-border/50 bg-card/30 p-4 space-y-4 overflow-auto">
         <div>
           <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Filters</h2>
-          <DataSourceBadge className="mt-2" />
           <p className="text-xs text-muted-foreground mt-1">EPA LMOP · live data</p>
         </div>
 
@@ -157,19 +170,29 @@ export default function LandfillMap() {
           </p>
         </div>
 
-        <div className="pt-2 space-y-1">
-          <p className="text-xs text-muted-foreground font-semibold">Legend</p>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="w-3 h-3 rounded-full inline-block" style={{ background: statusColor("Yes") }} /> Landfill
-            (accepts)
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="w-3 h-3 rounded-full inline-block" style={{ background: statusColor("Unknown") }} />{" "}
-            Landfill (unknown PV policy)
-          </div>
+        {/* Mirrors statusColor() exactly. The old legend showed two swatches for
+            a PV-acceptance policy the map never drew — and because neither value
+            matched "Open" or "Closed", both rendered the same amber, labelling
+            one colour as two different things. */}
+        <div className="pt-2 space-y-1.5">
+          <p className="text-xs font-semibold text-muted-foreground">Legend</p>
+          {[
+            { label: "Open", color: statusColor("Open") },
+            { label: "Closed", color: statusColor("Closed") },
+            { label: "Status unknown", color: statusColor(undefined) },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ background: item.color }}
+              />
+              {item.label}
+            </div>
+          ))}
           {showSolar && (
-            <div className="flex items-center gap-2 text-xs">
-              <span className="w-3 h-3 rounded-full bg-amber-400 inline-block" /> Solar facility (USPVDB)
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-amber-400" />
+              Solar facility (USPVDB)
             </div>
           )}
         </div>
@@ -202,7 +225,8 @@ export default function LandfillMap() {
             ))}
         </MapContainer>
       </div>
-    </div>
+      </div>
+    </MapPageShell>
   );
 }
 

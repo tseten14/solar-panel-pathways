@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { DataSourceBadge } from "@/components/DataSourceBadge";
 import { DataFreshnessBadge } from "@/components/DataFreshnessBadge";
 import { DataErrorState, DataLoadingState } from "@/components/DataLoadingState";
+import { MapPageHeader, MapPageShell } from "@/components/PageHeader";
 import { useLandfills } from "@/hooks/useLandfills";
 import { useSolarStatsByState } from "@/hooks/useSolarData";
 import { computeModelledTradeRoutes } from "@/lib/trade-flows";
@@ -70,8 +71,20 @@ export default function TradeFlows() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] flex-col lg:flex-row">
-      <div className="flex-1 min-h-[300px]">
+    <MapPageShell>
+      <MapPageHeader
+        title="Trade Flows"
+        subtitle="Modelled interstate journeys for retired solar panels"
+        actions={
+          <>
+            <DataSourceBadge />
+            <DataFreshnessBadge />
+          </>
+        }
+      />
+
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div className="min-h-[300px] flex-1">
         <MapContainer center={[39.5, -98.35]} zoom={4} className="w-full h-full" attributionControl={false}>
           <TileLayer url={basemapUrl} />
           {routes.map((r) => (
@@ -109,11 +122,7 @@ export default function TradeFlows() {
           <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground">
             Modelled Interstate Flows
           </h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <DataSourceBadge />
-            <DataFreshnessBadge />
-          </div>
-          <p className="text-xs text-muted-foreground flex items-start gap-1.5">
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
             Routes are estimated from solar capacity and landfill coverage — not observed trade data.
             No public PV-waste shipment registry exists.
@@ -153,6 +162,7 @@ export default function TradeFlows() {
           ))
         )}
       </div>
-    </div>
+      </div>
+    </MapPageShell>
   );
 }
