@@ -12,7 +12,7 @@ import tempfile
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from shapely.geometry import mapping, shape
@@ -24,6 +24,22 @@ from solar_scan_config import ESRI_EXPORT_URL, scan_max_px, scan_target_mpp
 logger = logging.getLogger("uvicorn.error")
 
 router = APIRouter()
+
+# Max length for an X-Reviewer value written into the audit trail.
+_ACTOR_MAX_LEN = 64
+
+
+def reviewer(x_reviewer: str | None = Header(default=None, alias="X-Reviewer")) -> str:
+    """Who to credit in detection_event for this request.
+
+    The browser sends X-Reviewer; the AI panel sends "agent". Anything absent or
+    unusable becomes the default actor rather than failing the write — losing an
+    edit because the header was missing would be worse than an unattributed one.
+    """
+    if not x_reviewer:
+        return solar_store.DEFAULT_ACTOR
+    cleaned = x_reviewer.strip()[:_ACTOR_MAX_LEN]
+    return cleaned or solar_store.DEFAULT_ACTOR
 
 
 # --- Imagery ------------------------------------------------------------------
@@ -198,7 +214,7 @@ class EraseCircleIn(BaseModel):
 # --- Endpoints --------------------------------------------------------------
 
 @router.post("/scan")
-async def scan(body: ScanIn) -> dict:
+async def scan(body: ScanIn, actor: str = Depends(reviewer)) -> dict:
     if len(body.bbox) != 4:
         raise HTTPException(400, "bbox must be [west, south, east, north]")
     west, south, east, north = body.bbox
@@ -231,6 +247,7 @@ async def scan(body: ScanIn) -> dict:
             radius_m=body.radius_m,
             features=raw_features,
             default_status=keep_status,
+            actor=actor,
         )
     finally:
         con.close()
@@ -328,10 +345,10 @@ async def detections(status: str | None = None, bbox: str | None = None) -> dict
     return {"type": "FeatureCollection", "features": features, "count": len(features)}
 
 
-def _decide(det_id: int, status: str) -> dict:
+def _decide(det_id: int, status: str, actor: str) -> dict:
     con = solar_store.connect()
     try:
-        return solar_store.set_status(con, det_id, status)
+        return solar_store.set_status(con, det_id, status, actor=actor)
     except KeyError:
         raise HTTPException(404, f"unknown detection id {det_id}") from None
     finally:
@@ -339,43 +356,45 @@ def _decide(det_id: int, status: str) -> dict:
 
 
 @router.post("/detections/{det_id}/confirm")
-async def confirm_detection(det_id: int) -> dict:
-    return _decide(det_id, "confirmed")
+async def confirm_detection(det_id: int, actor: str = Depends(reviewer)) -> dict:
+    return _decide(det_id, "confirmed", actor)
 
 
 @router.post("/detections/{det_id}/reject")
-async def reject_detection(det_id: int) -> dict:
-    return _decide(det_id, "rejected")
+async def reject_detection(det_id: int, actor: str = Depends(reviewer)) -> dict:
+    return _decide(det_id, "rejected", actor)
 
 
 @router.post("/detections/{det_id}/restore")
-async def restore_detection(det_id: int) -> dict:
-    return _decide(det_id, "pending")
+async def restore_detection(det_id: int, actor: str = Depends(reviewer)) -> dict:
+    return _decide(det_id, "pending", actor)
 
 
 @router.post("/detections/confirm-batch")
-async def confirm_batch(body: BatchDecisionIn) -> dict:
+async def confirm_batch(body: BatchDecisionIn, actor: str = Depends(reviewer)) -> dict:
     if body.status not in ("confirmed", "rejected", "pending"):
         raise HTTPException(400, "status must be confirmed | rejected | pending")
     if not body.ids:
         return {"updated": 0, "status": body.status}
     con = solar_store.connect()
     try:
-        n = solar_store.set_status_batch(con, body.ids, body.status)
+        n = solar_store.set_status_batch(con, body.ids, body.status, actor=actor)
     finally:
         con.close()
     return {"updated": n, "status": body.status}
 
 
 @router.post("/detections/erase-circle")
-async def erase_circle(body: EraseCircleIn) -> dict:
+async def erase_circle(body: EraseCircleIn, actor: str = Depends(reviewer)) -> dict:
     if len(body.center) != 2:
         raise HTTPException(400, "center must be [lat, lng]")
     if body.radius_m <= 0:
         raise HTTPException(400, "radius_m must be positive")
     con = solar_store.connect()
     try:
-        return solar_store.erase_in_circle(con, (body.center[0], body.center[1]), body.radius_m)
+        return solar_store.erase_in_circle(
+            con, (body.center[0], body.center[1]), body.radius_m, actor=actor
+        )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     finally:
@@ -383,12 +402,12 @@ async def erase_circle(body: EraseCircleIn) -> dict:
 
 
 @router.post("/detections/merge")
-async def merge_detections_endpoint(body: MergeDetectionsIn) -> dict:
+async def merge_detections_endpoint(body: MergeDetectionsIn, actor: str = Depends(reviewer)) -> dict:
     if len(body.ids) < 2:
         raise HTTPException(400, "merge requires at least two detection ids")
     con = solar_store.connect()
     try:
-        return solar_store.merge_detections(con, body.ids)
+        return solar_store.merge_detections(con, body.ids, actor=actor)
     except KeyError:
         raise HTTPException(404, "unknown detection id") from None
     except ValueError as e:
@@ -398,7 +417,7 @@ async def merge_detections_endpoint(body: MergeDetectionsIn) -> dict:
 
 
 @router.post("/detections/manual")
-async def manual_detection(body: ManualDetectionIn) -> dict:
+async def manual_detection(body: ManualDetectionIn, actor: str = Depends(reviewer)) -> dict:
     if body.status not in ("pending", "confirmed"):
         raise HTTPException(400, "status must be pending | confirmed")
     con = solar_store.connect()
@@ -409,6 +428,7 @@ async def manual_detection(body: ManualDetectionIn) -> dict:
             model=(body.model or "paint").strip() or "paint",
             confidence=body.confidence,
             status=body.status,
+            actor=actor,
         )
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
@@ -431,6 +451,45 @@ async def coverage() -> dict:
         "features": features,
         "scanned_area_km2": cov["scanned_area_km2"],
     }
+
+
+@router.get("/detections/{det_id}/history")
+async def detection_history(det_id: int) -> dict:
+    """Every recorded decision on one detection, oldest first."""
+    con = solar_store.connect()
+    try:
+        exists = con.execute("SELECT 1 FROM detection WHERE id=?", (det_id,)).fetchone()
+        if not exists:
+            raise HTTPException(404, f"unknown detection id {det_id}")
+        events = [
+            dict(r)
+            for r in con.execute(
+                "SELECT id, actor, action, from_status, to_status, reason, created_at"
+                " FROM detection_event WHERE detection_id=? ORDER BY id",
+                (det_id,),
+            )
+        ]
+    finally:
+        con.close()
+    return {"detection_id": det_id, "events": events}
+
+
+@router.get("/integrity")
+async def integrity() -> dict:
+    """Row counts for each integrity view. All zero means the store is consistent."""
+    views = (
+        "v_rejected_without_reason",
+        "v_review_timestamp_drift",
+        "v_detection_unindexed",
+    )
+    con = solar_store.connect()
+    try:
+        checks = {
+            view: con.execute(f"SELECT COUNT(*) n FROM {view}").fetchone()["n"] for view in views
+        }
+    finally:
+        con.close()
+    return {"ok": all(v == 0 for v in checks.values()), "checks": checks}
 
 
 @router.get("/detection-stats")

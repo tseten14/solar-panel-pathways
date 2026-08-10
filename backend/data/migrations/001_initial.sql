@@ -1,6 +1,8 @@
--- Solar-panel scan/review persistence. Two tables only: no Molokai-batch-pipeline
--- concepts (households, grid sections, AI review queues) apply to a nationwide
--- solar-detection dataset with no equivalent baseline.
+-- Baseline: the two tables the store started with.
+--
+-- Every statement is IF NOT EXISTS so this applies cleanly to a database that
+-- already has these tables from the pre-migrations era, where schema.sql was
+-- re-executed on every connection.
 
 CREATE TABLE IF NOT EXISTS scanned_area (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

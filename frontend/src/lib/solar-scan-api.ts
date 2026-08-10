@@ -45,6 +45,32 @@ export interface DetectionStats {
   scans: number;
 }
 
+const REVIEWER_KEY = "solartrace-reviewer-id";
+
+/**
+ * Stable per-browser id, sent as X-Reviewer so the backend's audit trail can
+ * attribute each decision. Generated once and kept in localStorage — this
+ * identifies a workstation, not a person, and is not an authentication token.
+ */
+export function reviewerId(): string {
+  try {
+    let id = localStorage.getItem(REVIEWER_KEY);
+    if (!id) {
+      id = `reviewer-${crypto.randomUUID().slice(0, 8)}`;
+      localStorage.setItem(REVIEWER_KEY, id);
+    }
+    return id;
+  } catch {
+    // Private mode or storage disabled — still attribute the write to a browser.
+    return "browser";
+  }
+}
+
+/** Headers for a mutating request. `actor` overrides the reviewer id (the AI panel sends "agent"). */
+function writeHeaders(actor?: string): Record<string, string> {
+  return { "Content-Type": "application/json", "X-Reviewer": actor ?? reviewerId() };
+}
+
 async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -75,13 +101,13 @@ async function asJson<T>(res: Response): Promise<T> {
 export function scanArea(
   bbox: [number, number, number, number],
   model: "sam3",
-  opts?: { center?: [number, number]; radius_m?: number; auto_confirm?: boolean },
+  opts?: { center?: [number, number]; radius_m?: number; auto_confirm?: boolean; actor?: string },
 ): Promise<ScanResult> {
   return withTimeout((signal) =>
     fetch(`${API_BASE}/scan`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bbox, model, ...opts }),
+      headers: writeHeaders(opts?.actor),
+      body: JSON.stringify({ bbox, model, ...opts, actor: undefined }),
       signal,
     }).then((r) => asJson<ScanResult>(r)),
   );
@@ -94,6 +120,8 @@ export function paintAt(
   return withTimeout((signal) =>
     fetch(`${API_BASE}/paint`, {
       method: "POST",
+      // Paint only returns a preview shape; nothing is stored until the caller
+      // saves it, so there is no audit actor to attribute here.
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ center, radius_m }),
       signal,
@@ -103,13 +131,13 @@ export function paintAt(
 
 export function saveManualDetection(
   geometry: GeoJSON.Polygon,
-  opts?: { model?: string; confidence?: number; status?: "pending" | "confirmed" },
+  opts?: { model?: string; confidence?: number; status?: "pending" | "confirmed"; actor?: string },
 ): Promise<SolarDetectionFeature> {
   return withTimeout((signal) =>
     fetch(`${API_BASE}/detections/manual`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ geometry, ...opts }),
+      headers: writeHeaders(opts?.actor),
+      body: JSON.stringify({ geometry, ...opts, actor: undefined }),
       signal,
     }).then((r) => asJson(r)),
   );
@@ -128,42 +156,55 @@ export function fetchDetections(status?: "pending" | "confirmed" | "rejected"): 
 export function decideDetection(
   id: number,
   action: "confirm" | "reject" | "restore",
+  actor?: string,
 ): Promise<{ id: number; status: string; previous: string }> {
   return withTimeout((signal) =>
-    fetch(`${API_BASE}/detections/${id}/${action}`, { method: "POST", signal }).then((r) => asJson(r)),
+    fetch(`${API_BASE}/detections/${id}/${action}`, {
+      method: "POST",
+      headers: writeHeaders(actor),
+      signal,
+    }).then((r) => asJson(r)),
   );
 }
 
 export function decideBatch(
   ids: number[],
   status: "confirmed" | "rejected" | "pending",
+  actor?: string,
 ): Promise<{ updated: number; status: string }> {
   return withTimeout((signal) =>
     fetch(`${API_BASE}/detections/confirm-batch`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: writeHeaders(actor),
       body: JSON.stringify({ ids, status }),
       signal,
     }).then((r) => asJson(r)),
   );
 }
 
-export function mergeDetections(ids: number[]): Promise<{ merged_id: number; rejected_ids: number[] }> {
+export function mergeDetections(
+  ids: number[],
+  actor?: string,
+): Promise<{ merged_id: number; rejected_ids: number[] }> {
   return withTimeout((signal) =>
     fetch(`${API_BASE}/detections/merge`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: writeHeaders(actor),
       body: JSON.stringify({ ids }),
       signal,
     }).then((r) => asJson(r)),
   );
 }
 
-export function eraseCircle(center: [number, number], radius_m: number): Promise<{ erased: number; ids: number[] }> {
+export function eraseCircle(
+  center: [number, number],
+  radius_m: number,
+  actor?: string,
+): Promise<{ erased: number; ids: number[] }> {
   return withTimeout((signal) =>
     fetch(`${API_BASE}/detections/erase-circle`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: writeHeaders(actor),
       body: JSON.stringify({ center, radius_m }),
       signal,
     }).then((r) => asJson(r)),

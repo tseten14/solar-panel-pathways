@@ -11,7 +11,7 @@
  * A faint preview follows the cursor so you can see where the square (or
  * circle) will land before committing.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -22,7 +22,7 @@ import {
   useMap,
 } from "react-leaflet";
 import type { LatLngBoundsExpression, LatLngTuple } from "leaflet";
-import type { Layer, LeafletMouseEvent, PathOptions } from "leaflet";
+import type { Layer, LeafletMouseEvent, Path, PathOptions } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import type { SolarDetectionFeature } from "@/lib/solar-scan-api";
 
@@ -202,30 +202,81 @@ export default function SolarScanMap({
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const [hoverPos, setHoverPos] = useState<LatLngTuple | null>(null);
 
-  const styleFor = useMemo(
-    () =>
-      (feature?: SolarDetectionFeature): PathOptions => {
-        const id = feature?.properties.id;
-        const status = feature?.properties.status ?? "pending";
-        const selected = id != null && selectedSet.has(id);
-        return {
-          color: selected ? "#ffffff" : STATUS_COLORS[status] ?? STATUS_COLORS.pending,
-          weight: selected ? 3 : 1.5,
-          fillColor: STATUS_COLORS[status] ?? STATUS_COLORS.pending,
-          fillOpacity: selected ? 0.55 : 0.35,
-        };
-      },
-    [selectedSet],
+  /**
+   * The layer is rebuilt only when the *set of detections* changes — not when a
+   * status or the selection changes. Those are repainted in place below.
+   */
+  const idsKey = useMemo(
+    () => detections.map((d) => d.properties.id).join(","),
+    [detections],
   );
 
-  const onEachFeature = (feature: SolarDetectionFeature, layer: Layer) => {
-    layer.on("click", (e: LeafletMouseEvent) => {
-      // Stop the map's own click handler firing too (it would place a scan square).
-      e.originalEvent?.stopPropagation();
-      const additive = Boolean(e.originalEvent?.shiftKey);
-      onSelectFeature(feature.properties.id, additive);
-    });
-  };
+  const statusById = useMemo(
+    () => new Map(detections.map((d) => [d.properties.id, d.properties.status])),
+    [detections],
+  );
+
+  const styleForId = useCallback(
+    (id: number): PathOptions => {
+      // Read status from the current map rather than the feature bound to the
+      // Leaflet layer: that object is a snapshot from when the layer was built,
+      // so after a confirm it still says "pending".
+      const status = statusById.get(id) ?? "pending";
+      const selected = selectedSet.has(id);
+      const color = STATUS_COLORS[status] ?? STATUS_COLORS.pending;
+      return {
+        color: selected ? "#ffffff" : color,
+        weight: selected ? 3 : 1.5,
+        fillColor: color,
+        fillOpacity: selected ? 0.55 : 0.35,
+      };
+    },
+    [statusById, selectedSet],
+  );
+
+  // Registry of the live Leaflet layer for each detection, so a repaint can
+  // reach one shape without touching the rest. Reset whenever the layer
+  // remounts, which is exactly when idsKey changes.
+  const layersById = useMemo(() => new Map<number, Path>(), [idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const previousSelected = useRef<Set<number>>(new Set());
+  const previousStatus = useRef<Map<number, string>>(new Map());
+
+  useEffect(() => {
+    // Repaint only what actually changed. Selecting a detection used to rebuild
+    // every polygon on the map; now it restyles two — the one leaving the
+    // selection and the one joining it.
+    const dirty = new Set<number>();
+    for (const id of selectedSet) if (!previousSelected.current.has(id)) dirty.add(id);
+    for (const id of previousSelected.current) if (!selectedSet.has(id)) dirty.add(id);
+    for (const [id, status] of statusById) {
+      if (previousStatus.current.get(id) !== status) dirty.add(id);
+    }
+
+    for (const id of dirty) layersById.get(id)?.setStyle(styleForId(id));
+
+    previousSelected.current = selectedSet;
+    previousStatus.current = statusById;
+  }, [selectedSet, statusById, styleForId, layersById]);
+
+  const onEachFeature = useCallback(
+    (feature: SolarDetectionFeature, layer: Layer) => {
+      layersById.set(feature.properties.id, layer as Path);
+      layer.on("click", (e: LeafletMouseEvent) => {
+        // Stop the map's own click handler firing too (it would place a scan square).
+        e.originalEvent?.stopPropagation();
+        const additive = Boolean(e.originalEvent?.shiftKey);
+        onSelectFeature(feature.properties.id, additive);
+      });
+    },
+    [layersById, onSelectFeature],
+  );
+
+  const initialStyle = useCallback(
+    (feature?: SolarDetectionFeature): PathOptions =>
+      styleForId(feature?.properties.id ?? -1),
+    [styleForId],
+  );
 
   const isErase = tool === "erase";
   const SCAN_COLOR = "#ffd166";  // amber — areas queued for scanning
@@ -270,11 +321,12 @@ export default function SolarScanMap({
         ))}
       {detections.length > 0 && (
         <LeafletGeoJSON
-          // Remount when data OR selection changes — react-leaflet's GeoJSON does not
-          // re-run `style` on prop change, so the selection highlight needs a new key.
-          key={`${detections.map((d) => `${d.properties.id}:${d.properties.status}`).join(",")}|${selectedIds.join(",")}`}
+          // Keyed on which detections exist, not on their status or selection —
+          // react-leaflet never re-runs `style` on prop change, so those are
+          // applied imperatively above instead of by throwing the layer away.
+          key={idsKey}
           data={featureCollection as GeoJSON.FeatureCollection}
-          style={styleFor as (feature?: GeoJSON.Feature) => PathOptions}
+          style={initialStyle as (feature?: GeoJSON.Feature) => PathOptions}
           onEachFeature={onEachFeature as (feature: GeoJSON.Feature, layer: Layer) => void}
         />
       )}

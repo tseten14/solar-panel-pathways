@@ -14,6 +14,7 @@ from pathlib import Path
 from shapely.geometry import Point, box, mapping, shape
 from shapely.strtree import STRtree
 
+import solar_migrate
 from solar_geometry import geometry_metrics, shape_filter_reason, utm_epsg_for
 from solar_scan_config import dedup_iou
 
@@ -21,17 +22,47 @@ REVIEW_STATUSES = ("pending", "confirmed", "rejected")
 
 _BACKEND_DIR = Path(__file__).resolve().parent
 DB_PATH = _BACKEND_DIR / "data" / "solar_scans.db"
-SCHEMA_PATH = _BACKEND_DIR / "data" / "schema.sql"
+
+# Who gets recorded in detection_event when a caller doesn't say.
+DEFAULT_ACTOR = "unknown"
+
+
+# Databases this process has already migrated. Keyed by path, not a single
+# boolean: DB_PATH is monkeypatched per test, and a process-wide flag would let
+# the second test reuse the first one's "already migrated" answer against a
+# different, empty file.
+_migrated: set[str] = set()
 
 
 def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH, timeout=30.0)
+    """Open a connection, migrating each database once per process.
+
+    Schema work used to happen on *every* connect — re-reading schema.sql and
+    re-running its DDL for each request and each agent tool call. Migrations are
+    now applied once, tracked in schema_migrations (see solar_migrate.py), so an
+    ordinary connect is just an open plus a few pragmas.
+    """
+    path = Path(DB_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(path, timeout=30.0)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA busy_timeout=5000")
-    con.executescript(SCHEMA_PATH.read_text())
+    # Enforced per connection, not by schema: SQLite defaults this off, and the
+    # detection -> scanned_area and detection_event -> detection references are
+    # only actually checked when it is on.
+    con.execute("PRAGMA foreign_keys=ON")
+
+    key = str(path.resolve())
+    if key not in _migrated:
+        solar_migrate.migrate(con)
+        _migrated.add(key)
     return con
+
+
+def reset_schema_cache() -> None:
+    """Forget which databases have been migrated (used by tests)."""
+    _migrated.clear()
 
 
 def metrics(geom_wgs) -> dict[str, float]:
@@ -53,6 +84,7 @@ def persist_scan(
     radius_m: float | None,
     features: list[dict],
     default_status: str = "pending",
+    actor: str = DEFAULT_ACTOR,
 ) -> dict:
     if default_status not in ("pending", "confirmed"):
         raise ValueError(f"default_status must be pending or confirmed, got {default_status!r}")
@@ -82,12 +114,11 @@ def persist_scan(
 
     # Nearby existing (non-rejected) detections — re-scan should only add arrays we
     # never saw. Rejected rows stay eligible for re-detection.
-    rows = con.execute(
-        "SELECT id, geometry FROM detection"
-        " WHERE review_status IN ('pending','confirmed')"
-        "   AND lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
-        (bbox[0] - 0.01, bbox[2] + 0.01, bbox[1] - 0.01, bbox[3] + 0.01),
-    ).fetchall()
+    rows = live_rows_in_bbox(
+        con,
+        (bbox[0] - 0.01, bbox[1] - 0.01, bbox[2] + 0.01, bbox[3] + 0.01),
+        columns="id, geometry",
+    )
     from solar_geometry import project_to_utm
 
     existing = [
@@ -102,6 +133,9 @@ def persist_scan(
 
     counts = {"pending": 0, "confirmed": 0, "skipped": 0, "by_reason": {}}
     ids: list[dict] = []
+    # Batched into one executemany at the end of the transaction rather than a
+    # round trip per detection.
+    created_events: list[tuple[int, str | None, str | None]] = []
 
     with con:
         cur = con.execute(
@@ -206,14 +240,53 @@ def persist_scan(
             )
             counts[status] += 1
             added.append(geom_m)
+            created_events.append((det_id, None, status))
+
+        record_events(
+            con, created_events, action="created", actor=actor, reason=f"scan {scan_id}"
+        )
 
     return {"scan_id": scan_id, "ids": ids, "counts": counts}
 
 
-def set_status(con: sqlite3.Connection, det_id: int, status: str) -> dict:
+ACTION_FOR_STATUS = {"confirmed": "confirm", "rejected": "reject", "pending": "restore"}
+
+
+def record_events(
+    con: sqlite3.Connection,
+    rows: list[tuple[int, str | None, str | None]],
+    *,
+    action: str,
+    actor: str = DEFAULT_ACTOR,
+    reason: str | None = None,
+) -> None:
+    """Append audit rows for (detection_id, from_status, to_status) tuples.
+
+    Append-only by contract: nothing in this module updates or deletes from
+    detection_event. Callers pass the *previous* status because once the UPDATE
+    has run it is no longer recoverable from the table.
+    """
+    if not rows:
+        return
+    con.executemany(
+        "INSERT INTO detection_event(detection_id, actor, action, from_status, to_status, reason)"
+        " VALUES (?,?,?,?,?,?)",
+        [(det_id, actor, action, before, after, reason) for det_id, before, after in rows],
+    )
+
+
+def set_status(
+    con: sqlite3.Connection,
+    det_id: int,
+    status: str,
+    *,
+    actor: str = DEFAULT_ACTOR,
+    reason: str | None = None,
+) -> dict:
     row = con.execute("SELECT review_status FROM detection WHERE id=?", (det_id,)).fetchone()
     if row is None:
         raise KeyError(det_id)
+    previous = row["review_status"]
     reviewed = "datetime('now')" if status in ("confirmed", "rejected") else "NULL"
     with con:
         con.execute(
@@ -222,18 +295,73 @@ def set_status(con: sqlite3.Connection, det_id: int, status: str) -> dict:
             " WHERE id=?",
             (status, status, det_id),
         )
-    return {"id": det_id, "status": status, "previous": row["review_status"]}
+        record_events(
+            con,
+            [(det_id, previous, status)],
+            action=ACTION_FOR_STATUS.get(status, "set_status"),
+            actor=actor,
+            reason=reason,
+        )
+    return {"id": det_id, "status": status, "previous": previous}
 
 
-def set_status_batch(con: sqlite3.Connection, det_ids: list[int], status: str) -> int:
+def set_status_batch(
+    con: sqlite3.Connection,
+    det_ids: list[int],
+    status: str,
+    *,
+    actor: str = DEFAULT_ACTOR,
+    reason: str | None = None,
+    action: str | None = None,
+) -> int:
+    if not det_ids:
+        return 0
     reviewed = "datetime('now')" if status in ("confirmed", "rejected") else "NULL"
     q = ",".join("?" * len(det_ids))
+    # Read the old statuses before the UPDATE overwrites them — the audit row is
+    # only worth having if it records what the value actually changed from.
+    previous = {
+        r["id"]: r["review_status"]
+        for r in con.execute(
+            f"SELECT id, review_status FROM detection WHERE id IN ({q})", det_ids
+        )
+    }
     with con:
         cur = con.execute(
             f"UPDATE detection SET review_status=?, reviewed_at={reviewed} WHERE id IN ({q})",
             [status, *det_ids],
         )
+        record_events(
+            con,
+            [(i, previous.get(i), status) for i in det_ids if i in previous],
+            action=action or ACTION_FOR_STATUS.get(status, "set_status"),
+            actor=actor,
+            reason=reason,
+        )
     return cur.rowcount
+
+
+def live_rows_in_bbox(
+    con: sqlite3.Connection,
+    bbox: tuple[float, float, float, float],
+    columns: str = "id, lng, lat",
+) -> list[sqlite3.Row]:
+    """Pending/confirmed detections whose centroid falls in [west, south, east, north].
+
+    Goes through the detection_bbox R-tree rather than range-scanning the
+    (lng, lat) index, so both dimensions narrow before any detection row is
+    read. Rejected rows are excluded here because every caller — dedup and
+    erase alike — treats them as eligible for re-detection.
+    """
+    west, south, east, north = bbox
+    return con.execute(
+        f"SELECT d.{columns.replace(', ', ', d.')} FROM detection_bbox b"
+        " JOIN detection d ON d.id = b.id"
+        " WHERE b.max_lng >= ? AND b.min_lng <= ?"
+        "   AND b.max_lat >= ? AND b.min_lat <= ?"
+        "   AND d.review_status IN ('pending','confirmed')",
+        (west, east, south, north),
+    ).fetchall()
 
 
 def ids_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius_m: float) -> list[int]:
@@ -252,12 +380,9 @@ def ids_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius_m
     pad = 1.15
     dlat = (radius_m * pad) / m_per_deg_lat
     dlng = (radius_m * pad) / m_per_deg_lng
-    rows = con.execute(
-        "SELECT id, lng, lat FROM detection"
-        " WHERE review_status IN ('pending','confirmed')"
-        "   AND lng BETWEEN ? AND ? AND lat BETWEEN ? AND ?",
-        (clng - dlng, clng + dlng, clat - dlat, clat + dlat),
-    ).fetchall()
+    rows = live_rows_in_bbox(
+        con, (clng - dlng, clat - dlat, clng + dlng, clat + dlat)
+    )
 
     epsg = utm_epsg_for(clng, clat)
     from solar_geometry import project_to_utm
@@ -273,14 +398,29 @@ def ids_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius_m
     ]
 
 
-def erase_in_circle(con: sqlite3.Connection, center: tuple[float, float], radius_m: float) -> dict:
+def erase_in_circle(
+    con: sqlite3.Connection,
+    center: tuple[float, float],
+    radius_m: float,
+    *,
+    actor: str = DEFAULT_ACTOR,
+) -> dict:
     erase_ids = ids_in_circle(con, center, radius_m)
     if erase_ids:
-        set_status_batch(con, erase_ids, "rejected")
+        set_status_batch(
+            con,
+            erase_ids,
+            "rejected",
+            actor=actor,
+            action="erase",
+            reason=f"erased within {radius_m:.0f}m of {center[0]:.5f},{center[1]:.5f}",
+        )
     return {"erased": len(erase_ids), "ids": erase_ids}
 
 
-def merge_detections(con: sqlite3.Connection, det_ids: list[int]) -> dict:
+def merge_detections(
+    con: sqlite3.Connection, det_ids: list[int], *, actor: str = DEFAULT_ACTOR
+) -> dict:
     from shapely.ops import unary_union
 
     if len(det_ids) < 2:
@@ -346,6 +486,23 @@ def merge_detections(con: sqlite3.Connection, det_ids: list[int]) -> dict:
                 f" WHERE id IN ({q})",
                 rejected,
             )
+        # Both sides of the merge are recorded: the survivor absorbed geometry,
+        # and the others were rejected *because of* this merge — without the
+        # reason they would look like ordinary rejections in the audit.
+        record_events(
+            con,
+            [(primary_id, status, status)],
+            action="merge",
+            actor=actor,
+            reason=f"absorbed {rejected}" if rejected else "merge",
+        )
+        record_events(
+            con,
+            [(i, status, "rejected") for i in rejected],
+            action="merge",
+            actor=actor,
+            reason=f"merged into {primary_id}",
+        )
 
     return {
         "merged_id": primary_id,
@@ -365,6 +522,7 @@ def insert_manual_detection(
     model: str = "paint",
     confidence: float | None = None,
     status: str = "pending",
+    actor: str = DEFAULT_ACTOR,
 ) -> dict:
     if status not in ("pending", "confirmed"):
         raise ValueError("status must be pending or confirmed")
@@ -391,6 +549,9 @@ def insert_manual_detection(
             ),
         )
         det_id = cur.lastrowid
+        record_events(
+            con, [(det_id, None, status)], action="created", actor=actor, reason="manual"
+        )
     row = con.execute(
         "SELECT id, geometry, lng, lat, model, confidence, area_m2, compactness,"
         " rectangularity, aspect_ratio, scan_id, review_status, filter_reason"
@@ -444,7 +605,7 @@ def query_detections(
     return [detection_feature(r) for r in con.execute(sql, args).fetchall()]
 
 
-def coverage(con: sqlite3.Connection) -> dict:
+def _compute_coverage(con: sqlite3.Connection) -> dict:
     # No nationwide equivalent of a fixed island boundary exists, so coverage is
     # reported as absolute scanned area (km²) rather than a percentage.
     from shapely.ops import unary_union
@@ -460,6 +621,58 @@ def coverage(con: sqlite3.Connection) -> dict:
 
     scanned_m = project_to_utm(scanned, epsg)
     return {"scanned": scanned, "scanned_area_km2": round(scanned_m.area / 1_000_000, 4)}
+
+
+def coverage(con: sqlite3.Connection, *, use_cache: bool = True) -> dict:
+    """Unioned scanned area, memoised in coverage_cache.
+
+    The union has to be recomputed from scratch whenever the scan set changes —
+    overlapping squares mean the total is not the sum of the parts — but it does
+    not change in between, and stats() asks for it on every page load, after
+    every scan and on each agent turn. The cache key is (scan count, max scan
+    id): an insert moves max_scan_id and a delete moves scan_count, so no stale
+    row can pass as current.
+    """
+    tally = con.execute(
+        "SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS max_id FROM scanned_area"
+    ).fetchone()
+    scan_count, max_scan_id = tally["n"], tally["max_id"]
+
+    if use_cache:
+        cached = con.execute(
+            "SELECT scanned_area_km2, geometry FROM coverage_cache"
+            " WHERE id = 1 AND scan_count = ? AND max_scan_id = ?",
+            (scan_count, max_scan_id),
+        ).fetchone()
+        if cached is not None:
+            return {
+                "scanned": shape(json.loads(cached["geometry"])) if cached["geometry"] else None,
+                "scanned_area_km2": cached["scanned_area_km2"],
+            }
+
+    result = _compute_coverage(con)
+    try:
+        with con:
+            con.execute(
+                "INSERT INTO coverage_cache(id, scan_count, max_scan_id, scanned_area_km2,"
+                " geometry, updated_at) VALUES (1,?,?,?,?,datetime('now'))"
+                " ON CONFLICT(id) DO UPDATE SET"
+                "   scan_count = excluded.scan_count,"
+                "   max_scan_id = excluded.max_scan_id,"
+                "   scanned_area_km2 = excluded.scanned_area_km2,"
+                "   geometry = excluded.geometry,"
+                "   updated_at = excluded.updated_at",
+                (
+                    scan_count,
+                    max_scan_id,
+                    result["scanned_area_km2"],
+                    json.dumps(mapping(result["scanned"])) if result["scanned"] else None,
+                ),
+            )
+    except sqlite3.Error:
+        # A read-only or locked database should still be able to report coverage.
+        pass
+    return result
 
 
 def stats(con: sqlite3.Connection) -> dict:

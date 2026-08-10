@@ -1,5 +1,15 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { MapPin, Eye, ScanSearch, Square, Grid2x2, Eraser, Trash2, Sparkles } from "lucide-react";
+import {
+  MapPin,
+  Eye,
+  ScanSearch,
+  Square,
+  Grid2x2,
+  Eraser,
+  Trash2,
+  Sparkles,
+  ListChecks,
+} from "lucide-react";
 import { GeoAiMark } from "@/components/GeoAiMark";
 import SolarScanMap, {
   scanBbox,
@@ -10,6 +20,7 @@ import SolarScanMap, {
 import SolarReviewQueue from "@/components/SolarReviewQueue";
 import AgentPanel from "@/agent/AgentPanel";
 import type { AgentActions, AgentMapContext, ClientToolOutcome } from "@/agent/types";
+import { useMediaQuery, WIDE_LAYOUT_QUERY } from "@/hooks/useMediaQuery";
 import { fetchBackendHealth, type BackendHealth } from "@/lib/apiHealth";
 import {
   scanArea,
@@ -22,6 +33,10 @@ import {
   type SolarDetectionFeature,
   type DetectionStats,
 } from "@/lib/solar-scan-api";
+
+// Recorded as the actor in the backend audit trail for anything the AI panel does,
+// so agent decisions are distinguishable from a person's in detection_event.
+const AGENT_ACTOR = "agent";
 
 const MIN_RADIUS_M = 50;
 const MAX_RADIUS_M = 800;
@@ -45,7 +60,21 @@ const Index = () => {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
-  const [agentOpen, setAgentOpen] = useState(true);
+  // Three columns only fit on a wide screen. On a laptop the agent starts
+  // collapsed so the map keeps its width; the header toggle brings it back.
+  const wideLayout = useMediaQuery(WIDE_LAYOUT_QUERY);
+  const [queueOpen, setQueueOpen] = useState(true);
+  const [agentOpen, setAgentOpen] = useState(wideLayout);
+  const autoCollapsed = useRef(false);
+
+  useEffect(() => {
+    // Only reacts to the *first* narrow layout seen, so a deliberate re-open is
+    // not undone by an incidental resize.
+    if (!wideLayout && !autoCollapsed.current) {
+      autoCollapsed.current = true;
+      setAgentOpen(false);
+    }
+  }, [wideLayout]);
   const [flyTarget, setFlyTarget] = useState<FlyTarget | null>(null);
   const [viewport, setViewport] = useState<MapViewport | null>(null);
   // The agent runs scans from callbacks that outlive a render, so the guard
@@ -123,6 +152,7 @@ const Index = () => {
     async (
       list: Array<{ center: [number, number]; radiusM: number }>,
       onStatus?: (message: string) => void,
+      actor?: string,
     ): Promise<ClientToolOutcome> => {
       if (list.length === 0) return { ok: false, error: "No scan area was given." };
       if (busyRef.current) return { ok: false, error: "A scan is already running." };
@@ -145,6 +175,7 @@ const Index = () => {
           const result = await scanArea(scanBbox(center, squareRadius), "sam3", {
             center,
             radius_m: squareRadius,
+            actor,
           });
           found += result.stored.pending;
           skipped += result.stored.skipped;
@@ -246,7 +277,11 @@ const Index = () => {
         setRadiusM(squareRadius);
         setSquares([center]);
         setFlyTarget({ lat: center[0], lng: center[1], nonce: Date.now() });
-        const outcome = await runScanSquares([{ center, radiusM: squareRadius }], onStatus);
+        const outcome = await runScanSquares(
+          [{ center, radiusM: squareRadius }],
+          onStatus,
+          AGENT_ACTOR,
+        );
         if (outcome.ok) setSquares([]);
         return outcome;
       },
@@ -256,7 +291,7 @@ const Index = () => {
         setTool("multi");
         setSquares(clamped.map((s) => s.center));
         setFlyTarget({ lat: clamped[0].center[0], lng: clamped[0].center[1], nonce: Date.now() });
-        const outcome = await runScanSquares(clamped, onStatus);
+        const outcome = await runScanSquares(clamped, onStatus, AGENT_ACTOR);
         if (outcome.ok) setSquares([]);
         return outcome;
       },
@@ -310,23 +345,29 @@ const Index = () => {
           </h1>
         </div>
 
-        <div className="flex items-center gap-4">
-          <StatusIndicator icon={<MapPin className="h-3 w-3" />} label="Scan area" active={squares.length > 0} />
-          <StatusIndicator icon={<Eye className="h-3 w-3" />} label="Detections" active={detections.length > 0} />
-          <div className="ml-2 hidden rounded-md border border-border/60 bg-background/30 px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted-foreground sm:block">
+        <div className="flex items-center gap-3">
+          <div className="hidden items-center gap-4 lg:flex">
+            <StatusIndicator icon={<MapPin className="h-3 w-3" />} label="Scan area" active={squares.length > 0} />
+            <StatusIndicator icon={<Eye className="h-3 w-3" />} label="Detections" active={detections.length > 0} />
+          </div>
+          <div className="ml-1 hidden rounded-md border border-border/60 bg-background/30 px-2.5 py-1 font-mono text-[10px] tracking-wide text-muted-foreground 2xl:block">
             SAM 3 · solar panel detection
           </div>
-          {!agentOpen && (
-            <button
-              type="button"
-              onClick={() => setAgentOpen(true)}
-              title="Show the AI agent panel"
-              className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 font-mono text-[10px] tracking-wide text-primary transition-colors hover:bg-primary/20"
-            >
-              <Sparkles className="h-3 w-3" />
-              AI Agent
-            </button>
-          )}
+          {/* Both panels are toggleable, because below ~1280px there is not room
+              for map + queue + agent at once without crushing the map. */}
+          <PanelToggle
+            icon={<ListChecks className="h-3 w-3" />}
+            label="Queue"
+            active={queueOpen}
+            count={pending.length}
+            onClick={() => setQueueOpen((v) => !v)}
+          />
+          <PanelToggle
+            icon={<Sparkles className="h-3 w-3" />}
+            label="AI Agent"
+            active={agentOpen}
+            onClick={() => setAgentOpen((v) => !v)}
+          />
         </div>
       </header>
 
@@ -341,7 +382,7 @@ const Index = () => {
       ) : null}
 
       <div className="relative z-20 flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div className="min-w-0 flex-1 shrink-0 overflow-hidden border-r border-border/70 bg-card/20">
+        <div className="min-w-[380px] flex-1 shrink overflow-hidden border-r border-border/70 bg-card/20">
           <div className="flex h-full w-full flex-col gap-2 p-3">
             <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-xl border border-border/70 bg-card/70 px-3 py-2 backdrop-blur-md">
               <div className="flex overflow-hidden rounded-lg border border-border/70">
@@ -416,7 +457,9 @@ const Index = () => {
           </div>
         </div>
 
-        <div className="w-[300px] shrink-0 overflow-hidden bg-card/30">
+        <div
+          className={`${queueOpen ? "block" : "hidden"} w-[260px] shrink-0 overflow-hidden bg-card/30 2xl:w-[300px]`}
+        >
           <SolarReviewQueue
             pending={pending}
             stats={stats}
@@ -433,7 +476,7 @@ const Index = () => {
         </div>
 
         {agentOpen && (
-          <div className="w-[340px] shrink-0 overflow-hidden border-l border-border/70">
+          <div className="w-[300px] shrink-0 overflow-hidden border-l border-border/70 2xl:w-[360px]">
             <AgentPanel
               getMapContext={getMapContext}
               actions={agentActions}
@@ -467,6 +510,40 @@ function ToolButton({
       }`}
     >
       {children}
+    </button>
+  );
+}
+
+function PanelToggle({
+  icon,
+  label,
+  active,
+  count,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  count?: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={`${active ? "Hide" : "Show"} the ${label} panel`}
+      className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono text-[10px] tracking-wide transition-colors ${
+        active
+          ? "border-primary/40 bg-primary/10 text-primary hover:bg-primary/20"
+          : "border-border/60 bg-background/30 text-muted-foreground hover:bg-muted/40"
+      }`}
+    >
+      {icon}
+      {label}
+      {count != null && count > 0 && (
+        <span className="rounded-full bg-primary/20 px-1.5 text-[9px] text-primary">{count}</span>
+      )}
     </button>
   );
 }

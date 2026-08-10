@@ -23,6 +23,32 @@ test("AI agent panel is open by default and can be hidden and reopened", async (
   await expect(panel).toBeVisible();
 });
 
+test("the review queue can be toggled from the header", async ({ page }) => {
+  await page.goto("/solar-map");
+  const queue = page.getByText("Review Queue");
+  await expect(queue).toBeVisible();
+
+  await page.getByRole("button", { name: /^Queue/ }).click();
+  await expect(queue).toBeHidden();
+
+  await page.getByRole("button", { name: /^Queue/ }).click();
+  await expect(queue).toBeVisible();
+});
+
+test("the agent panel starts collapsed on a laptop-width screen", async ({ page }) => {
+  // Below 1280px there is no room for map + queue + agent at once, so the agent
+  // yields rather than squeezing the map.
+  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto("/solar-map");
+
+  const panel = page.getByRole("complementary", { name: "AI map assistant" });
+  await expect(panel).toBeHidden();
+  await expect(page.getByText("Review Queue")).toBeVisible();
+
+  await page.getByRole("button", { name: "AI Agent" }).click();
+  await expect(panel).toBeVisible();
+});
+
 test("clicking a suggested prompt sends it as a message", async ({ page }) => {
   await page.goto("/solar-map");
   const panel = page.getByRole("complementary", { name: "AI map assistant" });
