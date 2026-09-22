@@ -1,6 +1,6 @@
 import { Suspense, lazy } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { ThemeProvider } from "next-themes";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -9,12 +9,9 @@ import { AppLayout } from "@/components/AppLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { DataLoadingState } from "@/components/DataLoadingState";
 
-// Each page is loaded only when you first visit it. Without this, opening the
-// Dashboard would also download the map and charting libraries it never uses.
-const Dashboard = lazy(() => import("./pages/Dashboard"));
+// Each page is loaded only when you first visit it. Without this, opening one
+// page would also download the map and charting libraries it never uses.
 const SolarCycleData = lazy(() => import("./pages/SolarCycleData"));
-const LandfillMap = lazy(() => import("./pages/LandfillMap"));
-const TradeFlows = lazy(() => import("./pages/TradeFlows"));
 const MLPredictions = lazy(() => import("./pages/MLPredictions"));
 const DataTable = lazy(() => import("./pages/DataTable"));
 const NotFound = lazy(() => import("./pages/NotFound"));
@@ -40,10 +37,11 @@ const App = () => (
           <ErrorBoundary>
             <Suspense fallback={<div className="p-6"><DataLoadingState message="Loading…" /></div>}>
             <Routes>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<Navigate to="/solarcycle" replace />} />
               <Route path="/solarcycle" element={<SolarCycleData />} />
-              <Route path="/map" element={<LandfillMap />} />
-              <Route path="/trade-flows" element={<TradeFlows />} />
+              {/* Removed pages; old bookmarks land on SolarCycle Data. */}
+              <Route path="/map" element={<Navigate to="/solarcycle" replace />} />
+              <Route path="/trade-flows" element={<Navigate to="/solarcycle" replace />} />
               <Route path="/predictions" element={<MLPredictions />} />
               <Route path="/data" element={<DataTable />} />
               <Route path="/solar-map" element={<SolarMap />} />

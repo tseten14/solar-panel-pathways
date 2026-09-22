@@ -1,4 +1,4 @@
-import { LayoutDashboard, Map, ArrowRightLeft, Brain, Database, Sun, ScanSearch, ClipboardList } from "lucide-react";
+import { Brain, Database, Sun, ScanSearch, ClipboardList } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
 import {
@@ -13,10 +13,7 @@ import {
 } from "@/components/ui/sidebar";
 
 const navItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "SolarCycle Data", url: "/solarcycle", icon: ClipboardList },
-  { title: "Landfill Map", url: "/map", icon: Map },
-  { title: "Trade Flows", url: "/trade-flows", icon: ArrowRightLeft },
   { title: "Coverage Analysis", url: "/predictions", icon: Brain },
   { title: "Data Table", url: "/data", icon: Database },
   { title: "Solar Detections", url: "/solar-map", icon: ScanSearch },

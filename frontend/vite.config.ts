@@ -24,10 +24,10 @@ export default defineConfig(({ mode }) => ({
       output: {
         // Split the heavy, rarely-changing libraries into their own chunks.
         // Leaflet and Recharts together are most of the bundle, and the
-        // Dashboard needs neither until you open a map or a chart page.
+        // Data Table page needs neither until you open a map or a chart page.
         manualChunks: {
           "vendor-react": ["react", "react-dom", "react-router-dom"],
-          "vendor-map": ["leaflet", "react-leaflet", "leaflet.markercluster"],
+          "vendor-map": ["leaflet", "react-leaflet"],
           "vendor-charts": ["recharts"],
         },
       },
