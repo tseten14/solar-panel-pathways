@@ -17,8 +17,9 @@ import { parseSurvey, toAssistantRows, type SurveySite } from "../../src/lib/sol
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 // Resolved from this file so Vercel's file tracing bundles the CSV with the
 // function; the working directory there is not the frontend folder.
+const SURVEY_URL = new URL("../../src/data/solarcycle-landfill-survey.csv", import.meta.url);
 const SURVEY_CANDIDATES = [
-  fileURLToPath(new URL("../../src/data/solarcycle-landfill-survey.csv", import.meta.url)),
+  ...(SURVEY_URL.protocol === "file:" ? [fileURLToPath(SURVEY_URL)] : []),
   path.join(process.cwd(), "src/data/solarcycle-landfill-survey.csv"),
   path.join(process.cwd(), "frontend/src/data/solarcycle-landfill-survey.csv"),
 ];
