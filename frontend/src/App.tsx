@@ -12,6 +12,7 @@ import { DataLoadingState } from "@/components/DataLoadingState";
 // Each page is loaded only when you first visit it. Without this, opening the
 // Dashboard would also download the map and charting libraries it never uses.
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const SolarCycleData = lazy(() => import("./pages/SolarCycleData"));
 const LandfillMap = lazy(() => import("./pages/LandfillMap"));
 const TradeFlows = lazy(() => import("./pages/TradeFlows"));
 const MLPredictions = lazy(() => import("./pages/MLPredictions"));
@@ -40,6 +41,7 @@ const App = () => (
             <Suspense fallback={<div className="p-6"><DataLoadingState message="Loading…" /></div>}>
             <Routes>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/solarcycle" element={<SolarCycleData />} />
               <Route path="/map" element={<LandfillMap />} />
               <Route path="/trade-flows" element={<TradeFlows />} />
               <Route path="/predictions" element={<MLPredictions />} />
