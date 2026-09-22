@@ -6,11 +6,13 @@ export default function AgentInput({
   isStreaming,
   onSend,
   onStop,
+  placeholder = "Ask me to scan, review, or navigate…",
 }: {
   disabled: boolean;
   isStreaming: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
+  placeholder?: string;
 }) {
   const [text, setText] = useState("");
 
@@ -36,7 +38,7 @@ export default function AgentInput({
             }
           }}
           placeholder={
-            disabled ? "Answer the question above first…" : "Ask me to scan, review, or navigate…"
+            disabled ? "Answer the question above first…" : placeholder
           }
           className="min-h-[52px] flex-1 resize-none rounded-lg border border-border/60 bg-background/40 px-2.5 py-2 text-xs text-foreground placeholder:text-muted-foreground/70 focus:border-primary/50 focus:outline-none disabled:opacity-50"
         />

@@ -26,6 +26,7 @@ from agent.router import router as agent_router
 from sam3_service import is_sam3_loaded, load_sam3, run_detection
 from solar_ai import router as solar_ai_router
 from solar_scan_api import router as solar_scan_router
+from solarcycle_ai import router as solarcycle_ai_router
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -37,6 +38,7 @@ app = FastAPI(
 app.include_router(solar_scan_router)
 app.include_router(solar_ai_router)
 app.include_router(agent_router)
+app.include_router(solarcycle_ai_router)
 
 
 @app.on_event("startup")

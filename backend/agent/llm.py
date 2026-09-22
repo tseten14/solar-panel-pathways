@@ -100,8 +100,6 @@ async def stream_turn(
     payload = {
         "model": agent_model(),
         "messages": [{"role": "system", "content": system}, *_strip_internal(messages)],
-        "tools": to_openai_tools(tools),
-        "tool_choice": "auto",
         "max_completion_tokens": max_tokens,
         # Reasoning models reject function tools on /v1/chat/completions unless
         # reasoning is off ("use /v1/responses or set reasoning_effort to
@@ -111,6 +109,10 @@ async def stream_turn(
         "reasoning_effort": reasoning_effort(),
         "stream": True,
     }
+    # OpenAI rejects tool_choice on a request that offers no tools.
+    if tools:
+        payload["tools"] = to_openai_tools(tools)
+        payload["tool_choice"] = "auto"
 
     text_parts: list[str] = []
     tool_acc: dict[int, dict] = {}

@@ -18,6 +18,9 @@ export default function AgentMessageList({
   onConfirm,
   onReject,
   onSuggest,
+  introTitle = "Map assistant",
+  introText = "Ask me to scan an area, review detections, clean up false positives, or fly somewhere. I drive the map directly — you'll see it happen.",
+  suggestions = SUGGESTED_PROMPTS,
 }: {
   messages: AgentMessage[];
   streamingText: string;
@@ -27,6 +30,9 @@ export default function AgentMessageList({
   onConfirm: (actionId: string) => void;
   onReject: (actionId: string) => void;
   onSuggest: (text: string) => void;
+  introTitle?: string;
+  introText?: string;
+  suggestions?: readonly string[];
 }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -67,14 +73,11 @@ export default function AgentMessageList({
         <div className="space-y-3 py-4">
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Sparkles className="h-4 w-4 text-primary" />
-            Map assistant
+            {introTitle}
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Ask me to scan an area, review detections, clean up false positives, or fly
-            somewhere. I drive the map directly — you'll see it happen.
-          </p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{introText}</p>
           <div className="flex flex-wrap gap-1.5">
-            {SUGGESTED_PROMPTS.map((prompt) => (
+            {suggestions.map((prompt) => (
               <button
                 key={prompt}
                 type="button"
