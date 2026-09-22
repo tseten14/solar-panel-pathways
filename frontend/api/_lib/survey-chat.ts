@@ -9,12 +9,19 @@
  * Replies stream as Server-Sent Events: `assistant_delta` chunks, optional
  * `error`, then `done`.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseSurvey, toAssistantRows, type SurveySite } from "../../src/lib/solarcycle.js";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const SURVEY_PATH = path.join(process.cwd(), "src/data/solarcycle-landfill-survey.csv");
+// Resolved from this file so Vercel's file tracing bundles the CSV with the
+// function; the working directory there is not the frontend folder.
+const SURVEY_CANDIDATES = [
+  fileURLToPath(new URL("../../src/data/solarcycle-landfill-survey.csv", import.meta.url)),
+  path.join(process.cwd(), "src/data/solarcycle-landfill-survey.csv"),
+  path.join(process.cwd(), "frontend/src/data/solarcycle-landfill-survey.csv"),
+];
 const MAX_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 4_000;
 const MAX_COMPLETION_TOKENS = 1_500;
@@ -57,7 +64,10 @@ export interface ChatDeps {
 let cachedSites: SurveySite[] | null = null;
 
 function loadSites(): SurveySite[] {
-  cachedSites ??= parseSurvey(readFileSync(SURVEY_PATH, "utf8"));
+  if (cachedSites) return cachedSites;
+  const file = SURVEY_CANDIDATES.find((p) => existsSync(p));
+  if (!file) throw new Error(`Survey CSV not found; looked in ${SURVEY_CANDIDATES.join(", ")}`);
+  cachedSites = parseSurvey(readFileSync(file, "utf8"));
   return cachedSites;
 }
 
@@ -119,7 +129,13 @@ function model(deps: ChatDeps): string {
 
 export function handleHealth(deps: ChatDeps = {}): Response {
   const apiKey = deps.apiKey ?? process.env.OPENAI_API_KEY;
-  return json({ configured: Boolean(apiKey?.trim()), model: model(deps) });
+  let surveyRows: number | null = null;
+  try {
+    surveyRows = (deps.sites ?? loadSites()).length;
+  } catch (err) {
+    console.error("solarcycle survey unavailable:", err);
+  }
+  return json({ configured: Boolean(apiKey?.trim()) && surveyRows !== null, model: model(deps), surveyRows });
 }
 
 async function openAiError(res: Response): Promise<string> {
@@ -185,7 +201,8 @@ export async function handleChat(request: Request, deps: ChatDeps = {}): Promise
         }
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
-          send("error", { message: "The assistant could not reach the AI service. Try again." });
+          console.error("solarcycle assistant failed:", err);
+          send("error", { message: "The assistant hit a server error. Try again in a moment." });
         }
       } finally {
         send("done", {});
