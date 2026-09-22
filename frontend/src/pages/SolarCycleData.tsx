@@ -416,7 +416,7 @@ export default function SolarCycleData() {
 
       {assistantOpen && (
         <div className="sticky top-0 h-[calc(100vh-3rem)] w-[320px] shrink-0 overflow-hidden border-l border-border/70 2xl:w-[380px]">
-          <SurveyAssistantPanel sites={SITES} onCollapse={() => setAssistantOpen(false)} />
+          <SurveyAssistantPanel onCollapse={() => setAssistantOpen(false)} />
         </div>
       )}
     </div>

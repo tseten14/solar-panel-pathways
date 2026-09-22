@@ -192,6 +192,30 @@ export function summariseByType(sites: SurveySite[]): { type: string; count: num
   return [...counts.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count);
 }
 
+/** The survey in the field names the assistant's prompt describes. */
+export function toAssistantRows(sites: SurveySite[]) {
+  return sites.map((s) => ({
+    state: s.state,
+    name: s.name,
+    type: s.type,
+    pv_status: s.pvStatus,
+    pv_raw: s.pvRaw,
+    accept_lqg: s.acceptLqg,
+    restrictions: s.restrictions,
+    owner: s.owner,
+    phone: s.phone,
+    alt_contact: s.altContact,
+    location: s.location,
+    website: s.website,
+    cost: s.cost,
+    cost_per: s.costPer,
+    cost_unit: s.costUnit,
+    cost_per_panel: s.costPerPanel,
+    call_notes: s.callNotes,
+    notes: s.notes,
+  }));
+}
+
 /** Sites with a quoted per-panel price, cheapest first. */
 export function pricedSites(sites: SurveySite[]): SurveySite[] {
   return sites

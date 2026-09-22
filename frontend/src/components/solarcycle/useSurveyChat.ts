@@ -1,39 +1,15 @@
 /**
  * One conversation with the SolarCycle data assistant. The server keeps no
- * session: every request carries the full transcript and the survey rows.
+ * session and holds its own copy of the survey: every request carries only
+ * the transcript.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseSseChunk } from "@/agent/useAgentChat";
 import type { AgentMessage } from "@/agent/types";
-import type { SurveySite } from "@/lib/solarcycle";
 
 const API_BASE = `${import.meta.env.VITE_API_URL ?? "/api"}/solarcycle-ai`;
 const STORAGE_KEY = "solartrace-solarcycle-chat";
 const ERROR_PREFIX = "⚠︎ ";
-
-/** The survey in the field names the assistant's prompt describes. */
-export function toAssistantRows(sites: SurveySite[]) {
-  return sites.map((s) => ({
-    state: s.state,
-    name: s.name,
-    type: s.type,
-    pv_status: s.pvStatus,
-    pv_raw: s.pvRaw,
-    accept_lqg: s.acceptLqg,
-    restrictions: s.restrictions,
-    owner: s.owner,
-    phone: s.phone,
-    alt_contact: s.altContact,
-    location: s.location,
-    website: s.website,
-    cost: s.cost,
-    cost_per: s.costPer,
-    cost_unit: s.costUnit,
-    cost_per_panel: s.costPerPanel,
-    call_notes: s.callNotes,
-    notes: s.notes,
-  }));
-}
 
 function loadMessages(): AgentMessage[] {
   try {
@@ -44,14 +20,12 @@ function loadMessages(): AgentMessage[] {
   }
 }
 
-export function useSurveyChat(sites: SurveySite[]) {
+export function useSurveyChat() {
   const [messages, setMessages] = useState<AgentMessage[]>(loadMessages);
   const [streamingText, setStreamingText] = useState("");
   const [progressText, setProgressText] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const rowsRef = useRef(toAssistantRows(sites));
-  rowsRef.current = toAssistantRows(sites);
 
   useEffect(() => {
     try {
@@ -92,12 +66,16 @@ export function useSurveyChat(sites: SurveySite[]) {
         const res = await fetch(`${API_BASE}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: history, sites: rowsRef.current }),
+          body: JSON.stringify({ messages: history }),
           signal: controller.signal,
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error(typeof body.detail === "string" ? body.detail : `Request failed: ${res.status}`);
+          throw new Error(
+            typeof body.detail === "string"
+              ? body.detail
+              : `The assistant is unavailable right now (error ${res.status}).`,
+          );
         }
         const reader = res.body?.getReader();
         if (!reader) throw new Error("The server sent no response body.");

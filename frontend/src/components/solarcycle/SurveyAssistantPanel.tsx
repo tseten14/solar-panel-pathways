@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import { ChevronRight, Sparkles } from "lucide-react";
 import AgentInput from "@/agent/AgentInput";
 import AgentMessageList from "@/agent/AgentMessageList";
-import type { SurveySite } from "@/lib/solarcycle";
 import { useSurveyChat } from "./useSurveyChat";
 
 const API_BASE = `${import.meta.env.VITE_API_URL ?? "/api"}/solarcycle-ai`;
@@ -20,14 +19,8 @@ export const SURVEY_PROMPTS = [
   "Which sites still need to be surveyed?",
 ] as const;
 
-export default function SurveyAssistantPanel({
-  sites,
-  onCollapse,
-}: {
-  sites: SurveySite[];
-  onCollapse: () => void;
-}) {
-  const chat = useSurveyChat(sites);
+export default function SurveyAssistantPanel({ onCollapse }: { onCollapse: () => void }) {
+  const chat = useSurveyChat();
   const [configured, setConfigured] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -78,7 +71,7 @@ export default function SurveyAssistantPanel({
 
       {configured === false && (
         <div className="shrink-0 border-b border-amber-500/30 bg-amber-500/10 px-3 py-2 font-mono text-[10px] leading-relaxed text-amber-700 dark:text-amber-100">
-          The assistant needs the backend running with OPENAI_API_KEY in the repo-root .env.
+          The assistant isn&rsquo;t set up yet: the server needs an OPENAI_API_KEY.
         </div>
       )}
 
