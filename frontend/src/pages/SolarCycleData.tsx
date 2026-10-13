@@ -6,6 +6,16 @@
  * and what does one panel cost. The table underneath is the lookup.
  */
 import { useEffect, useMemo, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip as RTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { ChevronDown, ChevronUp, Search, Sparkles } from "lucide-react";
 import surveyCsv from "@/data/solarcycle-landfill-survey.csv?raw";
 import SurveyAssistantPanel from "@/components/solarcycle/SurveyAssistantPanel";
@@ -92,7 +102,8 @@ const PRICE_BUCKETS: { label: string; hint: string; min: number; max: number }[]
 ];
 
 export default function SolarCycleData() {
-  const { isDark } = useThemeTokens();
+  const { isDark, chart } = useThemeTokens();
+  const { axis: AXIS, grid: GRID, tooltip: TOOLTIP_STYLE } = chart;
   const colours = STATUS_COLOURS[isDark ? "dark" : "light"];
   const navy = isDark ? "hsl(210 80% 62%)" : "hsl(222 58% 32%)";
   const [drawn, setDrawn] = useState(false);
@@ -160,7 +171,6 @@ export default function SolarCycleData() {
       })),
     [priced],
   );
-  const busiestBucket = Math.max(1, ...priceBuckets.map((b) => b.count));
 
   const priceByState = useMemo(
     () =>
@@ -332,6 +342,32 @@ export default function SolarCycleData() {
                 );
               })}
             </div>
+          </section>
+
+          <section className="glass-card p-5 sm:p-6" aria-labelledby="count-chart-heading">
+            <h2 id="count-chart-heading" className="text-lg font-semibold text-foreground">
+              How many landfills, by state
+            </h2>
+            <p className="mt-1 mb-4 text-sm text-muted-foreground">
+              Bar height is the number of landfills. Each color is one answer. A tall gray bar means most of that state
+              has not been called yet.
+            </p>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={byState} margin={{ left: 0, right: 8, top: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
+                <XAxis dataKey="state" tickFormatter={stateLabel} stroke={AXIS} fontSize={12} />
+                <YAxis stroke={AXIS} fontSize={12} allowDecimals={false} width={32} />
+                <RTooltip
+                  contentStyle={TOOLTIP_STYLE}
+                  labelFormatter={(code: string) => stateLabel(code)}
+                  formatter={(value: number, key: string) => [`${value} landfills`, STORY[key as PvStatus].title]}
+                />
+                <Legend formatter={(key: string) => STORY[key as PvStatus].title} wrapperStyle={{ fontSize: 12 }} />
+                {PV_STATUS_ORDER.map((status) => (
+                  <Bar key={status} dataKey={status} fill={colours[status]} radius={[3, 3, 0, 0]} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
           </section>
 
           <section aria-labelledby="states-heading">
@@ -518,43 +554,27 @@ export default function SolarCycleData() {
             <div className="glass-card p-5">
               <h2 className="text-lg font-semibold text-foreground">Yes against no, by state</h2>
               <p className="mt-1 mb-4 text-sm text-muted-foreground">
-                Unclear answers and sites not yet called are left out. Green is yes, red is no.
+                Unclear answers and sites not yet called are left out. Bar height is the number of calls. Green is yes,
+                red is no.
               </p>
-              <div className="space-y-3">
-                {coverage.map((row) => {
-                  const decided = row.accepts + row.declines;
-                  return (
-                    <div key={row.state}>
-                      <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-                        <span className="text-foreground">{stateLabel(row.state)}</span>
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {decided ? `${row.accepts} yes · ${row.declines} no` : "No clear yes or no yet"}
-                        </span>
-                      </div>
-                      <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
-                        {decided > 0 && (
-                          <>
-                            <div
-                              className="h-full transition-[width] duration-700 ease-out"
-                              style={{
-                                width: drawn ? `${(row.accepts / decided) * 100}%` : "0%",
-                                background: colours.accepts,
-                              }}
-                            />
-                            <div
-                              className="h-full transition-[width] duration-700 ease-out"
-                              style={{
-                                width: drawn ? `${(row.declines / decided) * 100}%` : "0%",
-                                background: colours.declines,
-                              }}
-                            />
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart
+                  data={coverage.map((row) => ({
+                    state: stateLabel(row.state),
+                    yes: row.accepts,
+                    no: row.declines,
+                  }))}
+                  margin={{ left: 0, right: 8, top: 8 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
+                  <XAxis dataKey="state" stroke={AXIS} fontSize={12} />
+                  <YAxis stroke={AXIS} fontSize={12} allowDecimals={false} width={28} />
+                  <RTooltip contentStyle={TOOLTIP_STYLE} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="yes" name="Said yes" fill={colours.accepts} radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="no" name="Said no" fill={colours.declines} radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </section>
 
@@ -637,21 +657,20 @@ export default function SolarCycleData() {
                   <div>
                     <h3 className="mb-1 text-sm font-medium text-foreground">How the {priced.length} quotes cluster</h3>
                     <p className="mb-3 text-xs text-muted-foreground">
-                      Each bar is a price range. Taller means more landfills quoted in that range.
+                      Bar height is how many landfills quoted a price in that range.
                     </p>
-                    <div className="space-y-3">
-                      {priceBuckets.map((bucket) => (
-                        <LabeledBar
-                          key={bucket.label}
-                          label={bucket.label}
-                          caption={`${bucket.count} ${bucket.count === 1 ? "landfill" : "landfills"}`}
-                          value={bucket.count}
-                          max={busiestBucket}
-                          color={navy}
-                          drawn={drawn}
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={priceBuckets} margin={{ left: 0, right: 8, top: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
+                        <XAxis dataKey="label" stroke={AXIS} fontSize={11} interval={0} />
+                        <YAxis stroke={AXIS} fontSize={12} allowDecimals={false} width={28} />
+                        <RTooltip
+                          contentStyle={TOOLTIP_STYLE}
+                          formatter={(value: number) => [`${value} landfills`, "Quotes"]}
                         />
-                      ))}
-                    </div>
+                        <Bar dataKey="count" name="Landfills" fill={navy} radius={[3, 3, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
                   <div>
                     <h3 className="mb-1 text-sm font-medium text-foreground">Typical price in each state</h3>
