@@ -94,6 +94,7 @@ const PRICE_BUCKETS: { label: string; hint: string; min: number; max: number }[]
 export default function SolarCycleData() {
   const { isDark } = useThemeTokens();
   const colours = STATUS_COLOURS[isDark ? "dark" : "light"];
+  const navy = isDark ? "hsl(210 80% 62%)" : "hsl(222 58% 32%)";
   const [drawn, setDrawn] = useState(false);
 
   useEffect(() => {
@@ -172,6 +173,31 @@ export default function SolarCycleData() {
     [priced],
   );
   const highestStateMedian = Math.max(1, ...priceByState.map((row) => row.median));
+
+  const callOnly = (["accepts", "declines", "unknown"] as const).map((status) => ({
+    status,
+    count: counts[status],
+  }));
+  const accepting = useMemo(() => SITES.filter((site) => site.pvStatus === "accepts"), []);
+  const withRestriction = accepting.filter((site) => {
+    const text = site.restrictions?.trim().toLowerCase() ?? "";
+    return text !== "" && text !== "none" && text !== "n/a" && text !== "na";
+  }).length;
+  const withPhone = accepting.filter((site) => Boolean(site.phone?.trim())).length;
+  const tonQuotes = useMemo(
+    () =>
+      SITES.map((site) => site.cost)
+        .filter((cost): cost is number => cost != null && cost > 0)
+        .sort((a, b) => a - b),
+    [],
+  );
+  const tonLow = tonQuotes[0];
+  const tonHigh = tonQuotes[tonQuotes.length - 1];
+  const tonTypical = tonQuotes.length
+    ? tonQuotes.length % 2
+      ? tonQuotes[Math.floor(tonQuotes.length / 2)]
+      : (tonQuotes[tonQuotes.length / 2 - 1] + tonQuotes[tonQuotes.length / 2]) / 2
+    : null;
 
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
@@ -377,7 +403,7 @@ export default function SolarCycleData() {
                     caption={`${row.called} of ${row.total} called · ${row.calledPct}%`}
                     value={row.calledPct}
                     max={100}
-                    color={colours.accepts}
+                    color={navy}
                     drawn={drawn}
                   />
                 ))}
@@ -408,7 +434,7 @@ export default function SolarCycleData() {
                     }
                     value={row.yesPct}
                     max={100}
-                    color={colours.accepts}
+                    color={navy}
                     drawn={drawn}
                   />
                 ))}
@@ -439,13 +465,123 @@ export default function SolarCycleData() {
                     caption={`${row.yes} of ${row.called} said yes · ${row.yesPct}%`}
                     value={row.yesPct}
                     max={100}
-                    color={colours.accepts}
+                    color={navy}
                     drawn={drawn}
                   />
                 ))}
               </div>
             </section>
           )}
+
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-labelledby="calls-heading">
+            <div className="glass-card p-5">
+              <h2 id="calls-heading" className="text-lg font-semibold text-foreground">
+                Just the {surveyed} completed calls
+              </h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">
+                The bar above includes landfills nobody has phoned yet. This one does not, so yes, no, and unclear fill
+                the whole bar.
+              </p>
+              <div
+                className="flex h-8 overflow-hidden rounded-full bg-muted"
+                role="img"
+                aria-label={callOnly.map((part) => `${STORY[part.status].title}: ${part.count}`).join(", ")}
+              >
+                {callOnly.map((part) =>
+                  part.count > 0 ? (
+                    <div
+                      key={part.status}
+                      className="h-full transition-[width] duration-700 ease-out"
+                      style={{
+                        width: drawn && surveyed ? `${(part.count / surveyed) * 100}%` : "0%",
+                        background: colours[part.status],
+                      }}
+                    />
+                  ) : null,
+                )}
+              </div>
+              <ul className="mt-4 space-y-1 text-sm text-muted-foreground">
+                {callOnly.map((part) => (
+                  <li key={part.status} className="flex items-center justify-between gap-3">
+                    <span className="flex items-center gap-2 text-foreground">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: colours[part.status] }} />
+                      {STORY[part.status].title}
+                    </span>
+                    <span className="font-mono text-xs">
+                      {part.count} · {surveyed ? Math.round((part.count / surveyed) * 100) : 0}% of calls
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="glass-card p-5">
+              <h2 className="text-lg font-semibold text-foreground">Yes against no, by state</h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">
+                Unclear answers and sites not yet called are left out. Green is yes, red is no.
+              </p>
+              <div className="space-y-3">
+                {coverage.map((row) => {
+                  const decided = row.accepts + row.declines;
+                  return (
+                    <div key={row.state}>
+                      <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+                        <span className="text-foreground">{stateLabel(row.state)}</span>
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {decided ? `${row.accepts} yes · ${row.declines} no` : "No clear yes or no yet"}
+                        </span>
+                      </div>
+                      <div className="flex h-2.5 overflow-hidden rounded-full bg-muted">
+                        {decided > 0 && (
+                          <>
+                            <div
+                              className="h-full transition-[width] duration-700 ease-out"
+                              style={{
+                                width: drawn ? `${(row.accepts / decided) * 100}%` : "0%",
+                                background: colours.accepts,
+                              }}
+                            />
+                            <div
+                              className="h-full transition-[width] duration-700 ease-out"
+                              style={{
+                                width: drawn ? `${(row.declines / decided) * 100}%` : "0%",
+                                background: colours.declines,
+                              }}
+                            />
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-3" aria-labelledby="practical-heading">
+            <h2 id="practical-heading" className="sr-only">
+              What a yes actually means
+            </h2>
+            <PriceCallout
+              label="Yes, but with rules"
+              value={`${withRestriction} of ${accepting.length}`}
+              detail="Sites that take panels and listed a restriction, such as residents only or no hazardous waste."
+            />
+            <PriceCallout
+              label="Yes, and left a phone"
+              value={`${withPhone} of ${accepting.length}`}
+              detail="Sites that take panels and recorded a number you can call."
+            />
+            <PriceCallout
+              label="Quoted per ton"
+              value={tonLow != null && tonHigh != null ? `$${Math.round(tonLow)}–$${Math.round(tonHigh)}` : "—"}
+              detail={
+                tonTypical != null
+                  ? `The landfill’s own price per ton. The middle quote is $${Math.round(tonTypical)}. Per-panel figures above are SolarCycle’s estimate from that.`
+                  : "No per-ton quotes recorded."
+              }
+            />
+          </section>
 
           <section className="glass-card p-5 sm:p-6" aria-labelledby="cost-heading">
             <h2 id="cost-heading" className="text-lg font-semibold text-foreground">
@@ -485,7 +621,7 @@ export default function SolarCycleData() {
                             className="h-full rounded-full transition-[width] duration-700 ease-out"
                             style={{
                               width: drawn ? `${(site.costPerPanel! / highest) * 100}%` : "0%",
-                              background: colours.accepts,
+                              background: navy,
                             }}
                           />
                         </div>
@@ -511,7 +647,7 @@ export default function SolarCycleData() {
                           caption={`${bucket.count} ${bucket.count === 1 ? "landfill" : "landfills"}`}
                           value={bucket.count}
                           max={busiestBucket}
-                          color={colours.accepts}
+                          color={navy}
                           drawn={drawn}
                         />
                       ))}
@@ -530,7 +666,7 @@ export default function SolarCycleData() {
                           caption={`${money(row.median)} · ${row.count} ${row.count === 1 ? "quote" : "quotes"}`}
                           value={row.median}
                           max={highestStateMedian}
-                          color={colours.unknown}
+                          color={navy}
                           drawn={drawn}
                         />
                       ))}

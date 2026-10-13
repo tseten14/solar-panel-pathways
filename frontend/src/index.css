@@ -10,45 +10,45 @@
    * dark-rail-on-light-canvas split is the design's defining trait.
    */
   :root {
-    --background: 150 8% 98%;
-    --foreground: 150 22% 14%;
+    --background: 214 32% 97%;
+    --foreground: 222 35% 14%;
 
     --card: 0 0% 100%;
-    --card-foreground: 150 22% 14%;
+    --card-foreground: 222 35% 14%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 150 22% 14%;
+    --popover-foreground: 222 35% 14%;
 
-    /* Darker teal than the dark-mode accent so text-primary keeps contrast on white. */
-    --primary: 152 42% 30%;
-    --primary-foreground: 0 0% 100%;
+    /* Navy on white. Green is reserved for "takes panels" status. */
+    --primary: 222 58% 28%;
+    --primary-foreground: 210 40% 98%;
 
-    --secondary: 150 7% 94%;
-    --secondary-foreground: 150 22% 14%;
+    --secondary: 214 24% 94%;
+    --secondary-foreground: 222 35% 14%;
 
-    --muted: 150 6% 93%;
-    --muted-foreground: 150 10% 40%;
+    --muted: 214 22% 93%;
+    --muted-foreground: 215 14% 40%;
 
-    --accent: 152 30% 32%;
+    --accent: 217 45% 36%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 4 72% 48%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 150 9% 88%;
-    --input: 150 9% 88%;
-    --ring: 152 32% 36%;
+    --border: 214 18% 86%;
+    --input: 214 18% 86%;
+    --ring: 217 55% 40%;
 
     --radius: 0.5rem;
 
-    --sidebar-background: 150 17% 14%;
-    --sidebar-foreground: 150 6% 90%;
-    --sidebar-primary: 152 34% 44%;
-    --sidebar-primary-foreground: 150 14% 10%;
-    --sidebar-accent: 150 12% 21%;
-    --sidebar-accent-foreground: 150 6% 92%;
-    --sidebar-border: 150 12% 24%;
-    --sidebar-ring: 152 32% 38%;
+    --sidebar-background: 222 47% 12%;
+    --sidebar-foreground: 210 25% 92%;
+    --sidebar-primary: 210 75% 62%;
+    --sidebar-primary-foreground: 222 47% 10%;
+    --sidebar-accent: 222 36% 18%;
+    --sidebar-accent-foreground: 210 25% 96%;
+    --sidebar-border: 222 30% 20%;
+    --sidebar-ring: 210 70% 55%;
 
     --highlight: 38 95% 44%;
     --highlight-foreground: 35 60% 14%;
@@ -58,21 +58,21 @@
     --on-track: 152 40% 32%;
     --at-risk: 38 92% 42%;
     --off-track: 4 72% 48%;
-    --neutral: 150 10% 44%;
+    --neutral: 215 12% 44%;
 
-    --chart-1: 152 42% 32%;
+    --chart-1: 222 55% 32%;
     --chart-2: 38 92% 45%;
     --chart-3: 4 72% 50%;
-    --chart-4: 164 30% 34%;
-    --chart-5: 150 10% 55%;
+    --chart-4: 210 55% 42%;
+    --chart-5: 215 14% 50%;
 
     --status-accept: 152 40% 32%;
     --status-reject: 4 72% 48%;
     --status-conditional: 38 92% 42%;
 
     /* Surfaces used by charts and map chrome, so they follow the theme. */
-    --map-tint: 150 8% 92%;
-    --card-shadow: 150 20% 40% / 0.12;
+    --map-tint: 214 24% 92%;
+    --card-shadow: 222 40% 30% / 0.12;
   }
 
   /* Navy dark theme. Success greens stay green so status still reads at a glance. */
@@ -205,7 +205,7 @@
     padding: 1px;
     background: linear-gradient(
       135deg,
-      hsl(152 50% 45% / 0.35),
+      hsl(222 55% 40% / 0.4),
       hsl(202 60% 50% / 0.12) 40%,
       transparent 60%,
       hsl(38 90% 55% / 0.18)

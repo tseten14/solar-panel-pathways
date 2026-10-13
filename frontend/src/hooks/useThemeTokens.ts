@@ -39,14 +39,14 @@ const DARK: Omit<ThemeTokens, "isDark"> = {
 const LIGHT: Omit<ThemeTokens, "isDark"> = {
   basemapUrl: "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
   chart: {
-    axis: "hsl(150 10% 40%)",
-    grid: "hsl(150 9% 88%)",
-    series: "hsl(152 42% 32%)",
+    axis: "hsl(215 14% 40%)",
+    grid: "hsl(214 18% 86%)",
+    series: "hsl(222 58% 32%)",
     tooltip: {
       background: "hsl(0 0% 100%)",
-      border: "1px solid hsl(150 9% 88%)",
+      border: "1px solid hsl(214 18% 86%)",
       borderRadius: 8,
-      color: "hsl(150 22% 14%)",
+      color: "hsl(222 35% 14%)",
     },
   },
   status: { open: "hsl(152 42% 32%)", closed: "hsl(150 8% 55%)", unknown: "hsl(38 92% 38%)" },
