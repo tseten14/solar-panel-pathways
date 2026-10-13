@@ -1,35 +1,14 @@
 /**
- * SolarCycle's own landfill survey — real call results, not modelled data.
+ * SolarCycle's landfill phone survey, told in plain language.
  *
- * Answers the customer questions directly: which landfills near me take
- * panels, which refuse, and what disposal costs. The table underneath keeps
- * every field from the survey, including contacts and call notes.
+ * The top of the page answers three questions a visitor can see without
+ * reading a table: did the landfill say yes, how does that differ by state,
+ * and what does one panel cost. The table underneath is the lookup.
  */
-import { useMemo, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  ResponsiveContainer,
-  Tooltip as RTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
-  Building2,
-  ChevronDown,
-  ChevronUp,
-  CircleCheck,
-  CircleX,
-  DollarSign,
-  HelpCircle,
-  Search,
-  Sparkles,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, Search, Sparkles } from "lucide-react";
 import surveyCsv from "@/data/solarcycle-landfill-survey.csv?raw";
 import SurveyAssistantPanel from "@/components/solarcycle/SurveyAssistantPanel";
-import { StatCard } from "@/components/StatCard";
 import { Button } from "@/components/ui/button";
 import { WIDE_LAYOUT_QUERY } from "@/hooks/useMediaQuery";
 import { PageContainer, PageHeader } from "@/components/PageHeader";
@@ -42,11 +21,11 @@ import {
   PV_STATUS_LABEL,
   PV_STATUS_ORDER,
   type PvStatus,
+  type StateBreakdown,
   type SurveySite,
   parseSurvey,
   pricedSites,
   summariseByState,
-  summariseByType,
 } from "@/lib/solarcycle";
 
 const SITES = parseSurvey(surveyCsv);
@@ -58,12 +37,22 @@ const STATE_NAMES: Record<string, string> = {
   TX: "Texas",
 };
 
+const STATE_ORDER = ["AZ", "NV", "NM", "TX"];
+
+/** Short labels for the story at the top. The table keeps the fuller wording. */
+const STORY: Record<PvStatus, { title: string; hint: string }> = {
+  accepts: { title: "Take panels", hint: "Said yes to old solar panels" },
+  declines: { title: "Won't take them", hint: "Said no" },
+  unknown: { title: "Unclear", hint: "Reached, but no clear yes or no" },
+  not_surveyed: { title: "Not called yet", hint: "On the list, no answer recorded" },
+};
+
 const STATUS_COLOURS: Record<"dark" | "light", Record<PvStatus, string>> = {
   dark: {
     accepts: "hsl(152 45% 50%)",
     declines: "hsl(0 65% 60%)",
     unknown: "hsl(38 92% 55%)",
-    not_surveyed: "hsl(150 6% 38%)",
+    not_surveyed: "hsl(222 18% 42%)",
   },
   light: {
     accepts: "hsl(152 50% 34%)",
@@ -80,7 +69,7 @@ const STATUS_BADGE: Record<PvStatus, string> = {
   not_surveyed: "border-border text-muted-foreground",
 };
 
-type SortKey = "state" | "name" | "type" | "pvStatus" | "costPerPanel";
+type SortKey = "state" | "name" | "pvStatus" | "costPerPanel";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
@@ -88,14 +77,39 @@ function stateLabel(code: string) {
   return STATE_NAMES[code] ?? code;
 }
 
-export default function SolarCycleData() {
-  const { isDark, chart } = useThemeTokens();
-  const { axis: AXIS, grid: GRID, tooltip: TOOLTIP_STYLE, series: SERIES } = chart;
-  const colours = STATUS_COLOURS[isDark ? "dark" : "light"];
+function medianPrice(sites: SurveySite[]): number | null {
+  if (sites.length === 0) return null;
+  const mid = Math.floor(sites.length / 2);
+  if (sites.length % 2 === 1) return sites[mid].costPerPanel!;
+  return (sites[mid - 1].costPerPanel! + sites[mid].costPerPanel!) / 2;
+}
 
-  const byState = useMemo(() => summariseByState(SITES), []);
-  const byType = useMemo(() => summariseByType(SITES), []);
+const PRICE_BUCKETS: { label: string; hint: string; min: number; max: number }[] = [
+  { label: "Under $2", hint: "Cheaper than a typical quote", min: 0, max: 2 },
+  { label: "$2 to $4", hint: "Around the middle of the quotes", min: 2, max: 4 },
+  { label: "$4 to $8", hint: "On the expensive side", min: 4, max: 8 },
+  { label: "$8 or more", hint: "The highest quotes", min: 8, max: Infinity },
+];
+
+export default function SolarCycleData() {
+  const { isDark } = useThemeTokens();
+  const colours = STATUS_COLOURS[isDark ? "dark" : "light"];
+  const [drawn, setDrawn] = useState(false);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setDrawn(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const byState = useMemo(() => {
+    const rows = summariseByState(SITES);
+    return STATE_ORDER.map((code) => rows.find((r) => r.state === code)).filter(
+      (r): r is StateBreakdown => r != null,
+    );
+  }, []);
   const priced = useMemo(() => pricedSites(SITES), []);
+  const cheapest = priced.slice(0, 5);
+  const highest = priced[priced.length - 1]?.costPerPanel ?? null;
 
   const counts = useMemo(() => {
     const c: Record<PvStatus, number> = { accepts: 0, declines: 0, unknown: 0, not_surveyed: 0 };
@@ -103,26 +117,68 @@ export default function SolarCycleData() {
     return c;
   }, []);
   const surveyed = SITES.length - counts.not_surveyed;
+  const yesShare = surveyed ? Math.round((counts.accepts / surveyed) * 100) : 0;
+  const typical = medianPrice(priced);
 
-  const priceChart = useMemo(() => {
-    const nameCounts = new Map<string, number>();
-    for (const s of priced) nameCounts.set(s.name, (nameCounts.get(s.name) ?? 0) + 1);
-    return priced.map((s) => ({
-      label:
-        nameCounts.get(s.name)! > 1 && s.restrictions
-          ? `${s.name} (${s.restrictions}), ${s.state}`
-          : `${s.name}, ${s.state}`,
-      perPanel: s.costPerPanel!,
-      perTon: s.cost,
-      restrictions: s.restrictions,
-    }));
-  }, [priced]);
+  const coverage = useMemo(
+    () =>
+      byState.map((row) => {
+        const called = row.total - row.not_surveyed;
+        return {
+          ...row,
+          called,
+          calledPct: Math.round((called / row.total) * 100),
+          yesPct: called ? Math.round((row.accepts / called) * 100) : 0,
+        };
+      }),
+    [byState],
+  );
+  const furthest = [...coverage].sort((a, b) => b.calledPct - a.calledPct)[0];
+  const thinnest = [...coverage].sort((a, b) => a.calledPct - b.calledPct)[0];
+  const mostYes = [...coverage].filter((row) => row.called > 0).sort((a, b) => b.yesPct - a.yesPct)[0];
+
+  const byOperator = useMemo(() => {
+    const map = new Map<string, { yes: number; called: number }>();
+    for (const site of SITES) {
+      if (!site.type || site.pvStatus === "not_surveyed") continue;
+      const row = map.get(site.type) ?? { yes: 0, called: 0 };
+      row.called += 1;
+      if (site.pvStatus === "accepts") row.yes += 1;
+      map.set(site.type, row);
+    }
+    return [...map.entries()]
+      .map(([type, row]) => ({ type, ...row, yesPct: Math.round((row.yes / row.called) * 100) }))
+      .sort((a, b) => b.called - a.called);
+  }, []);
+
+  const priceBuckets = useMemo(
+    () =>
+      PRICE_BUCKETS.map((bucket) => ({
+        ...bucket,
+        count: priced.filter((s) => s.costPerPanel! >= bucket.min && s.costPerPanel! < bucket.max).length,
+      })),
+    [priced],
+  );
+  const busiestBucket = Math.max(1, ...priceBuckets.map((b) => b.count));
+
+  const priceByState = useMemo(
+    () =>
+      STATE_ORDER.map((code) => {
+        const quotes = priced.filter((s) => s.state === code);
+        const median = medianPrice(quotes);
+        if (median == null) return null;
+        return { state: code, median, count: quotes.length };
+      }).filter((row): row is { state: string; median: number; count: number } => row != null),
+    [priced],
+  );
+  const highestStateMedian = Math.max(1, ...priceByState.map((row) => row.median));
 
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<"all" | PvStatus>("all");
   const [sortKey, setSortKey] = useState<SortKey>("state");
   const [sortAsc, setSortAsc] = useState(true);
+  const [assistantOpen, setAssistantOpen] = useState(() => window.matchMedia(WIDE_LAYOUT_QUERY).matches);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -138,7 +194,6 @@ export default function SolarCycleData() {
     const dir = sortAsc ? 1 : -1;
     return rows.sort((a, b) => {
       if (sortKey === "costPerPanel") {
-        // Unpriced sites always sink to the bottom.
         if (a.costPerPanel == null) return b.costPerPanel == null ? 0 : 1;
         if (b.costPerPanel == null) return -1;
         return (a.costPerPanel - b.costPerPanel) * dir;
@@ -158,16 +213,21 @@ export default function SolarCycleData() {
     }
   };
 
+  const focusStatus = (status: PvStatus) => {
+    setStatusFilter((current) => (current === status ? "all" : status));
+    setStateFilter("all");
+    document.getElementById("landfill-lookup")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const focusState = (code: string) => {
+    setStateFilter((current) => (current === code ? "all" : code));
+    document.getElementById("landfill-lookup")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const SortIcon = ({ col }: { col: SortKey }) =>
     sortKey === col ? (
       sortAsc ? <ChevronUp className="ml-1 inline h-3 w-3" /> : <ChevronDown className="ml-1 inline h-3 w-3" />
     ) : null;
-
-  const [assistantOpen, setAssistantOpen] = useState(() => window.matchMedia(WIDE_LAYOUT_QUERY).matches);
-
-  const minPrice = priced[0]?.costPerPanel;
-  const maxPrice = priced[priced.length - 1]?.costPerPanel;
-  const states = byState.map((s) => s.state);
 
   return (
     <div className="flex items-start">
@@ -175,156 +235,319 @@ export default function SolarCycleData() {
         <PageContainer>
           <PageHeader
             title="SolarCycle Data"
-            subtitle={
-              <>
-                SolarCycle called landfills in {states.map(stateLabel).join(", ")} to ask whether they accept end-of-life
-                solar panels. Prices are as quoted in July 2024. Sites marked &ldquo;not yet surveyed&rdquo; are on the
-                call list but have no answer recorded yet.
-              </>
-            }
+            subtitle="SolarCycle phoned landfills in Arizona, Nevada, New Mexico, and Texas and asked one question: will you take old solar panels? Prices are from July 2024."
             actions={
-              <>
-                <Badge variant="outline" className="text-xs">SolarCycle survey</Badge>
-                <Badge variant="outline" className="text-xs">Prices as of July 2024</Badge>
-                {!assistantOpen && (
-                  <Button variant="outline" size="sm" onClick={() => setAssistantOpen(true)}>
-                    <Sparkles className="mr-2 h-3.5 w-3.5 text-primary" /> Ask the data
-                  </Button>
-                )}
-              </>
+              !assistantOpen && (
+                <Button variant="outline" size="sm" onClick={() => setAssistantOpen(true)}>
+                  <Sparkles className="mr-2 h-3.5 w-3.5 text-primary" /> Ask the data
+                </Button>
+              )
             }
           />
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-            <StatCard
-              icon={Building2}
-              label="Sites listed"
-              value={SITES.length}
-              subtitle={`${surveyed} contacted · ${states.length} states`}
-            />
-            <StatCard
-              icon={CircleCheck}
-              label="Accept PV panels"
-              value={counts.accepts}
-              subtitle={surveyed ? `${Math.round((counts.accepts / surveyed) * 100)}% of contacted sites` : undefined}
-              highlight
-            />
-            <StatCard
-              icon={CircleX}
-              label="Do not accept"
-              value={counts.declines}
-              subtitle={`${counts.unknown} more gave no clear answer`}
-            />
-            <StatCard
-              icon={HelpCircle}
-              label="Not yet surveyed"
-              value={counts.not_surveyed}
-              subtitle="On the call list, no answer yet"
-            />
-            <StatCard
-              icon={DollarSign}
-              label="Cost per panel"
-              value={minPrice != null && maxPrice != null ? `${money(minPrice)}–${money(maxPrice)}` : "—"}
-              subtitle={`${priced.length} sites gave a price`}
-            />
-          </div>
+          <section className="glass-card p-5 sm:p-6" aria-labelledby="answers-heading">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 id="answers-heading" className="text-lg font-semibold text-foreground">
+                  What landfills said
+                </h2>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                  {SITES.length} landfills are on the list. SolarCycle has reached {surveyed}. Of those calls,{" "}
+                  <span className="font-medium text-foreground">{yesShare}% said yes</span>.
+                </p>
+              </div>
+              <p className="text-xs text-muted-foreground">Click a color to see those landfills below.</p>
+            </div>
 
-          <div className="glass-card p-5">
-            <h3 className="text-sm font-semibold text-foreground">Do landfills accept solar panels? By state</h3>
-            <p className="mb-4 text-xs text-muted-foreground">
-              Each bar is every listed landfill in that state, split by the answer SolarCycle received.
-            </p>
-            <ResponsiveContainer width="100%" height={Math.max(220, byState.length * 56)}>
-              <BarChart data={byState} layout="vertical" margin={{ left: 8, right: 16 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false} />
-                <XAxis type="number" stroke={AXIS} fontSize={12} allowDecimals={false} />
-                <YAxis
-                  type="category"
-                  dataKey="state"
-                  stroke={AXIS}
-                  fontSize={12}
-                  width={90}
-                  tickFormatter={stateLabel}
-                />
-                <RTooltip
-                  contentStyle={TOOLTIP_STYLE}
-                  labelFormatter={(code: string) => stateLabel(code)}
-                  formatter={(v: number, key: string) => [`${v} sites`, PV_STATUS_LABEL[key as PvStatus]]}
-                />
-                <Legend formatter={(key: string) => PV_STATUS_LABEL[key as PvStatus]} wrapperStyle={{ fontSize: 12 }} />
-                {PV_STATUS_ORDER.map((status, i) => (
-                  <Bar
+            <div
+              className="mt-5 flex h-10 overflow-hidden rounded-full bg-muted"
+              role="img"
+              aria-label={PV_STATUS_ORDER.map((status) => `${STORY[status].title}: ${counts[status]}`).join(", ")}
+            >
+              {PV_STATUS_ORDER.map((status) =>
+                counts[status] > 0 ? (
+                  <div
                     key={status}
-                    dataKey={status}
-                    stackId="pv"
-                    fill={colours[status]}
-                    radius={i === PV_STATUS_ORDER.length - 1 ? [0, 4, 4, 0] : 0}
+                    className="h-full transition-[width] duration-700 ease-out"
+                    style={{
+                      width: drawn ? `${(counts[status] / SITES.length) * 100}%` : "0%",
+                      background: colours[status],
+                    }}
+                  />
+                ) : null,
+              )}
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+              {PV_STATUS_ORDER.map((status) => {
+                const share = Math.round((counts[status] / SITES.length) * 100);
+                const selected = statusFilter === status;
+                return (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => focusStatus(status)}
+                    aria-pressed={selected}
+                    className={`rounded-lg border px-3 py-3 text-left transition-colors ${
+                      selected ? "border-primary bg-primary/10" : "border-transparent hover:bg-muted/60"
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 text-sm font-medium text-foreground">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: colours[status] }} />
+                      {STORY[status].title}
+                    </span>
+                    <span className="mt-1 block font-mono text-2xl font-semibold tracking-tight text-foreground">
+                      {counts[status]}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">
+                      {share}% of the list · {STORY[status].hint}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section aria-labelledby="states-heading">
+            <h2 id="states-heading" className="text-lg font-semibold text-foreground">
+              Same answers, by state
+            </h2>
+            <p className="mt-1 mb-4 text-sm text-muted-foreground">
+              Each bar is every landfill in that state. Green means they take panels. Click a state to filter the list.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {byState.map((row) => {
+                const called = row.total - row.not_surveyed;
+                const yes = called ? Math.round((row.accepts / called) * 100) : 0;
+                const selected = stateFilter === row.state;
+                return (
+                  <button
+                    key={row.state}
+                    type="button"
+                    onClick={() => focusState(row.state)}
+                    aria-pressed={selected}
+                    className={`glass-card p-4 text-left ${selected ? "ring-2 ring-primary" : ""}`}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-base font-semibold text-foreground">{stateLabel(row.state)}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{row.total} listed</span>
+                    </div>
+                    <div className="mt-3 flex h-3 overflow-hidden rounded-full bg-muted" aria-hidden>
+                      {PV_STATUS_ORDER.map((status) =>
+                        row[status] > 0 ? (
+                          <div
+                            key={status}
+                            className="h-full transition-[width] duration-700 ease-out"
+                            style={{
+                              width: drawn ? `${(row[status] / row.total) * 100}%` : "0%",
+                              background: colours[status],
+                            }}
+                          />
+                        ) : null,
+                      )}
+                    </div>
+                    <p className="mt-3 text-sm text-foreground">
+                      <span className="font-semibold">{row.accepts}</span>{" "}
+                      {row.accepts === 1 ? "takes panels" : "take panels"}
+                      {called > 0 && <span className="text-muted-foreground"> · {yes}% of calls</span>}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {row.declines} said no · {row.unknown} unclear · {row.not_surveyed} not called
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2" aria-labelledby="reading-heading">
+            <div className="glass-card p-5">
+              <h2 id="reading-heading" className="text-lg font-semibold text-foreground">
+                How much of the list has been called
+              </h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">
+                A short bar means most landfills in that state have not been phoned yet, so the picture there is still
+                incomplete.
+              </p>
+              <div className="space-y-3">
+                {coverage.map((row) => (
+                  <LabeledBar
+                    key={row.state}
+                    label={stateLabel(row.state)}
+                    caption={`${row.called} of ${row.total} called · ${row.calledPct}%`}
+                    value={row.calledPct}
+                    max={100}
+                    color={colours.accepts}
+                    drawn={drawn}
                   />
                 ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <div className="glass-card p-5 lg:col-span-2">
-              <h3 className="text-sm font-semibold text-foreground">Disposal cost per panel</h3>
-              <p className="mb-4 text-xs text-muted-foreground">
-                Landfills that quoted a price, cheapest first. Per-panel figure is SolarCycle&rsquo;s estimate from the
-                quoted price per ton.
-              </p>
-              {priceChart.length ? (
-                <ResponsiveContainer width="100%" height={Math.max(220, priceChart.length * 34)}>
-                  <BarChart data={priceChart} layout="vertical" margin={{ left: 8, right: 48 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false} />
-                    <XAxis type="number" stroke={AXIS} fontSize={12} tickFormatter={(v: number) => `$${v}`} />
-                    <YAxis type="category" dataKey="label" stroke={AXIS} fontSize={11} width={260} interval={0} />
-                    <RTooltip
-                      contentStyle={TOOLTIP_STYLE}
-                      formatter={(v: number, _k, item) => {
-                        const perTon = item.payload.perTon as number | null;
-                        return [`${money(v)} per panel${perTon != null ? ` · $${perTon}/ton` : ""}`, "Cost"];
-                      }}
-                    />
-                    <Bar
-                      dataKey="perPanel"
-                      fill={colours.accepts}
-                      radius={[0, 4, 4, 0]}
-                      label={{ position: "right", fill: AXIS, fontSize: 11, formatter: (v: number) => money(v) }}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <p className="text-sm text-muted-foreground">No prices recorded yet.</p>
+              </div>
+              {furthest && thinnest && furthest.state !== thinnest.state && (
+                <p className="mt-4 text-xs text-muted-foreground">
+                  {stateLabel(furthest.state)} is furthest along ({furthest.calledPct}% called).{" "}
+                  {stateLabel(thinnest.state)} is earliest ({thinnest.calledPct}% called), so treat that state&rsquo;s
+                  yes-rate cautiously — it rests on {thinnest.called} {thinnest.called === 1 ? "call" : "calls"}.
+                </p>
               )}
             </div>
 
             <div className="glass-card p-5">
-              <h3 className="text-sm font-semibold text-foreground">Who runs these landfills</h3>
-              <p className="mb-4 text-xs text-muted-foreground">
-                Operator type, for the {byType.reduce((n, t) => n + t.count, 0)} sites where it was recorded.
+              <h2 className="text-lg font-semibold text-foreground">Of the calls, how often they said yes</h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">
+                This ignores landfills that have not been called, so states can be compared on the same terms.
               </p>
-              <ResponsiveContainer width="100%" height={Math.max(200, byType.length * 44)}>
-                <BarChart data={byType} layout="vertical" margin={{ left: 8, right: 32 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={GRID} horizontal={false} />
-                  <XAxis type="number" stroke={AXIS} fontSize={12} allowDecimals={false} />
-                  <YAxis type="category" dataKey="type" stroke={AXIS} fontSize={12} width={90} />
-                  <RTooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v} sites`, "Landfills"]} />
-                  <Bar
-                    dataKey="count"
-                    fill={SERIES}
-                    radius={[0, 4, 4, 0]}
-                    label={{ position: "right", fill: AXIS, fontSize: 11 }}
+              <div className="space-y-3">
+                {coverage.map((row) => (
+                  <LabeledBar
+                    key={row.state}
+                    label={stateLabel(row.state)}
+                    caption={
+                      row.called
+                        ? `${row.accepts} of ${row.called} calls · ${row.yesPct}%`
+                        : "No calls yet"
+                    }
+                    value={row.yesPct}
+                    max={100}
+                    color={colours.accepts}
+                    drawn={drawn}
                   />
-                </BarChart>
-              </ResponsiveContainer>
+                ))}
+              </div>
+              {mostYes && (
+                <p className="mt-4 text-xs text-muted-foreground">
+                  {stateLabel(mostYes.state)} said yes most often: {mostYes.yesPct}% of {mostYes.called}{" "}
+                  {mostYes.called === 1 ? "call" : "calls"}.
+                </p>
+              )}
             </div>
-          </div>
+          </section>
 
-          <div className="space-y-3">
+          {byOperator.length > 0 && (
+            <section className="glass-card p-5 sm:p-6" aria-labelledby="operator-heading">
+              <h2 id="operator-heading" className="text-lg font-semibold text-foreground">
+                Who said yes, by who runs the landfill
+              </h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">
+                Only landfills SolarCycle reached, and only where the survey recorded an operator type. The bar is the
+                share of those calls that said yes.
+              </p>
+              <div className="space-y-3">
+                {byOperator.map((row) => (
+                  <LabeledBar
+                    key={row.type}
+                    label={row.type}
+                    caption={`${row.yes} of ${row.called} said yes · ${row.yesPct}%`}
+                    value={row.yesPct}
+                    max={100}
+                    color={colours.accepts}
+                    drawn={drawn}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="glass-card p-5 sm:p-6" aria-labelledby="cost-heading">
+            <h2 id="cost-heading" className="text-lg font-semibold text-foreground">
+              What one panel costs to drop off
+            </h2>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Only landfills that quoted a price. The figure is SolarCycle&rsquo;s estimate for a single panel, worked
+              out from the landfill&rsquo;s price per ton.
+            </p>
+
+            {priced.length > 0 && highest != null && typical != null ? (
+              <>
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <PriceCallout label="Cheapest quote" value={money(priced[0].costPerPanel!)} detail={priced[0].name} />
+                  <PriceCallout label="Typical quote" value={money(typical)} detail={`Middle of ${priced.length} prices`} />
+                  <PriceCallout
+                    label="Highest quote"
+                    value={money(highest)}
+                    detail={priced[priced.length - 1].name}
+                  />
+                </div>
+
+                <h3 className="mb-3 mt-6 text-sm font-medium text-foreground">Five cheapest places</h3>
+                <ul className="space-y-2.5">
+                  {cheapest.map((site) => (
+                    <li key={site.id} className="grid grid-cols-[1fr_auto] items-center gap-3">
+                      <div className="min-w-0">
+                        <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+                          <span className="truncate text-foreground">
+                            {site.name}
+                            <span className="text-muted-foreground"> · {stateLabel(site.state)}</span>
+                          </span>
+                          <span className="shrink-0 font-mono text-foreground">{money(site.costPerPanel!)}</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-muted">
+                          <div
+                            className="h-full rounded-full transition-[width] duration-700 ease-out"
+                            style={{
+                              width: drawn ? `${(site.costPerPanel! / highest) * 100}%` : "0%",
+                              background: colours.accepts,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Bar length is compared with the highest quote ({money(highest)}), so a short bar is a cheaper drop-off.
+                </p>
+
+                <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  <div>
+                    <h3 className="mb-1 text-sm font-medium text-foreground">How the {priced.length} quotes cluster</h3>
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      Each bar is a price range. Taller means more landfills quoted in that range.
+                    </p>
+                    <div className="space-y-3">
+                      {priceBuckets.map((bucket) => (
+                        <LabeledBar
+                          key={bucket.label}
+                          label={bucket.label}
+                          caption={`${bucket.count} ${bucket.count === 1 ? "landfill" : "landfills"}`}
+                          value={bucket.count}
+                          max={busiestBucket}
+                          color={colours.accepts}
+                          drawn={drawn}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="mb-1 text-sm font-medium text-foreground">Typical price in each state</h3>
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      The middle quote for that state. States with no price yet are left out.
+                    </p>
+                    <div className="space-y-3">
+                      {priceByState.map((row) => (
+                        <LabeledBar
+                          key={row.state}
+                          label={stateLabel(row.state)}
+                          caption={`${money(row.median)} · ${row.count} ${row.count === 1 ? "quote" : "quotes"}`}
+                          value={row.median}
+                          max={highestStateMedian}
+                          color={colours.unknown}
+                          drawn={drawn}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="mt-4 text-sm text-muted-foreground">No prices recorded yet.</p>
+            )}
+          </section>
+
+          <section id="landfill-lookup" className="scroll-mt-4 space-y-3">
             <div>
-              <h2 className="text-lg font-semibold text-foreground">Find a landfill</h2>
-              <p className="text-xs text-muted-foreground">
-                Every site from the survey, with contact details, restrictions and call notes.
+              <h2 className="text-lg font-semibold text-foreground">Look up a landfill</h2>
+              <p className="text-sm text-muted-foreground">
+                Name, answer, price, and who to call. Open a row for restrictions and notes from the phone call.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -343,7 +566,7 @@ export default function SolarCycleData() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All states</SelectItem>
-                  {states.map((s) => (
+                  {STATE_ORDER.map((s) => (
                     <SelectItem key={s} value={s}>
                       {stateLabel(s)}
                     </SelectItem>
@@ -355,14 +578,27 @@ export default function SolarCycleData() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">Any PV answer</SelectItem>
+                  <SelectItem value="all">Any answer</SelectItem>
                   {PV_STATUS_ORDER.map((s) => (
                     <SelectItem key={s} value={s}>
-                      {PV_STATUS_LABEL[s]}
+                      {STORY[s].title}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {(stateFilter !== "all" || statusFilter !== "all" || search) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setStateFilter("all");
+                    setStatusFilter("all");
+                    setSearch("");
+                  }}
+                >
+                  Clear
+                </Button>
+              )}
             </div>
 
             <div className="glass-card overflow-hidden">
@@ -370,33 +606,27 @@ export default function SolarCycleData() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="sticky top-0 cursor-pointer bg-card" onClick={() => handleSort("state")}>
-                        State
-                        <SortIcon col="state" />
-                      </TableHead>
+                      <TableHead className="sticky top-0 w-8 bg-card" />
                       <TableHead className="sticky top-0 cursor-pointer bg-card" onClick={() => handleSort("name")}>
                         Landfill
                         <SortIcon col="name" />
                       </TableHead>
-                      <TableHead className="sticky top-0 cursor-pointer bg-card" onClick={() => handleSort("type")}>
-                        Type
-                        <SortIcon col="type" />
+                      <TableHead className="sticky top-0 cursor-pointer bg-card" onClick={() => handleSort("state")}>
+                        State
+                        <SortIcon col="state" />
                       </TableHead>
                       <TableHead className="sticky top-0 cursor-pointer bg-card" onClick={() => handleSort("pvStatus")}>
-                        Accepts PV?
+                        Takes panels?
                         <SortIcon col="pvStatus" />
                       </TableHead>
-                      <TableHead className="sticky top-0 bg-card">Restrictions</TableHead>
                       <TableHead
                         className="sticky top-0 cursor-pointer bg-card text-right"
                         onClick={() => handleSort("costPerPanel")}
                       >
-                        $/panel
+                        Cost / panel
                         <SortIcon col="costPerPanel" />
                       </TableHead>
-                      <TableHead className="sticky top-0 bg-card">Operator &amp; contact</TableHead>
-                      <TableHead className="sticky top-0 bg-card">Location</TableHead>
-                      <TableHead className="sticky top-0 bg-card">Notes</TableHead>
+                      <TableHead className="sticky top-0 bg-card">Who to call</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -407,10 +637,10 @@ export default function SolarCycleData() {
                 </Table>
               </div>
               <p className="border-t border-border/50 p-3 text-xs text-muted-foreground">
-                Showing {filtered.length} of {SITES.length} sites.
+                Showing {filtered.length} of {SITES.length} landfills.
               </p>
             </div>
-          </div>
+          </section>
         </PageContainer>
       </div>
 
@@ -423,65 +653,119 @@ export default function SolarCycleData() {
   );
 }
 
+function LabeledBar({
+  label,
+  caption,
+  value,
+  max,
+  color,
+  drawn,
+}: {
+  label: string;
+  caption: string;
+  value: number;
+  max: number;
+  color: string;
+  drawn: boolean;
+}) {
+  const width = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
+        <span className="text-foreground">{label}</span>
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">{caption}</span>
+      </div>
+      <div className="h-2.5 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full transition-[width] duration-700 ease-out"
+          style={{ width: drawn ? `${width}%` : "0%", background: color }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PriceCallout({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/40 px-4 py-3">
+      <p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-2xl font-semibold text-foreground">{value}</p>
+      <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</p>
+    </div>
+  );
+}
+
 function SiteRow({ site: s }: { site: SurveySite }) {
+  const [open, setOpen] = useState(false);
   const notes = [
+    s.restrictions && `Restrictions: ${s.restrictions}`,
     s.notes,
     s.callNotes && `Call notes: ${s.callNotes}`,
-    s.acceptLqg && `Accepts LQG: ${s.acceptLqg}`,
+    s.acceptLqg && `Accepts large-quantity hazardous waste: ${s.acceptLqg}`,
+    s.type && `Operator type: ${s.type}`,
   ].filter(Boolean) as string[];
   const website = s.website?.startsWith("http") ? s.website : null;
+  const hasDetails = notes.length > 0 || Boolean(s.location);
 
   return (
-    <TableRow className="align-top hover:bg-muted/30">
-      <TableCell className="font-mono text-xs">{s.state}</TableCell>
-      <TableCell className="min-w-48 font-medium">
-        {website ? (
-          <a href={website} target="_blank" rel="noreferrer" className="hover:text-primary hover:underline">
-            {s.name}
-          </a>
-        ) : (
-          s.name
-        )}
-      </TableCell>
-      <TableCell className="text-muted-foreground">{s.type ?? "—"}</TableCell>
-      <TableCell>
-        <Badge variant="outline" className={`whitespace-nowrap text-xs ${STATUS_BADGE[s.pvStatus]}`}>
-          {PV_STATUS_LABEL[s.pvStatus]}
-        </Badge>
-        {s.pvRaw && s.pvRaw !== "Yes" && s.pvRaw !== "No" && s.pvRaw !== "?" && (
-          <p className="mt-1 text-xs text-muted-foreground">{s.pvRaw}</p>
-        )}
-      </TableCell>
-      <TableCell className="min-w-48 max-w-64 text-xs text-muted-foreground">{s.restrictions ?? "—"}</TableCell>
-      <TableCell className="whitespace-nowrap text-right font-mono text-xs">
-        {s.costPerPanel != null && s.costPerPanel > 0 ? (
-          <>
+    <>
+      <TableRow className="hover:bg-muted/30">
+        <TableCell className="w-8 pr-0">
+          {hasDetails && (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              aria-label={open ? `Hide details for ${s.name}` : `Show details for ${s.name}`}
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+          )}
+        </TableCell>
+        <TableCell className="min-w-48 font-medium">
+          {website ? (
+            <a href={website} target="_blank" rel="noreferrer" className="hover:text-primary hover:underline">
+              {s.name}
+            </a>
+          ) : (
+            s.name
+          )}
+        </TableCell>
+        <TableCell>{stateLabel(s.state)}</TableCell>
+        <TableCell>
+          <Badge variant="outline" className={`whitespace-nowrap text-xs ${STATUS_BADGE[s.pvStatus]}`}>
+            {PV_STATUS_LABEL[s.pvStatus]}
+          </Badge>
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-right font-mono text-sm">
+          {s.costPerPanel != null && s.costPerPanel > 0 ? (
             <span className="text-foreground">{money(s.costPerPanel)}</span>
-            {s.cost != null && (
-              <p className="text-muted-foreground">
-                ${s.cost}/{s.costPer === "2000" && s.costUnit === "lbs" ? "ton" : [s.costPer, s.costUnit].filter(Boolean).join(" ")}
+          ) : s.cost === 0 ? (
+            <span className="text-muted-foreground">Free</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </TableCell>
+        <TableCell className="min-w-40 text-sm">
+          {s.owner && <p className="text-foreground">{s.owner}</p>}
+          {s.phone && <p className="text-muted-foreground">{s.phone}</p>}
+          {!s.owner && !s.phone && <span className="text-muted-foreground">—</span>}
+        </TableCell>
+      </TableRow>
+      {open && hasDetails && (
+        <TableRow className="bg-muted/20 hover:bg-muted/20">
+          <TableCell />
+          <TableCell colSpan={5} className="text-sm text-muted-foreground">
+            {s.location && <p className="text-foreground">{s.location}</p>}
+            {notes.map((n) => (
+              <p key={n} className="mt-1">
+                {n}
               </p>
-            )}
-          </>
-        ) : s.cost != null ? (
-          <span className="text-muted-foreground">
-            {s.cost === 0 ? "Free" : `$${s.cost}`}
-            {s.costPer ? ` / ${s.costPer.toLowerCase()}` : ""}
-          </span>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-      <TableCell className="min-w-48 text-xs">
-        {s.owner && <p className="text-foreground">{s.owner}</p>}
-        {s.phone && <p className="whitespace-pre-line text-muted-foreground">{s.phone}</p>}
-        {s.altContact && <p className="text-muted-foreground">{s.altContact}</p>}
-        {!s.owner && !s.phone && !s.altContact && <span className="text-muted-foreground">—</span>}
-      </TableCell>
-      <TableCell className="min-w-48 text-xs text-muted-foreground">{s.location ?? "—"}</TableCell>
-      <TableCell className="min-w-56 max-w-80 text-xs text-muted-foreground">
-        {notes.length ? notes.map((n) => <p key={n}>{n}</p>) : "—"}
-      </TableCell>
-    </TableRow>
+            ))}
+          </TableCell>
+        </TableRow>
+      )}
+    </>
   );
 }
