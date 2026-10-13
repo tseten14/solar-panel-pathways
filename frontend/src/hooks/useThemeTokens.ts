@@ -23,17 +23,17 @@ export interface ThemeTokens {
 const DARK: Omit<ThemeTokens, "isDark"> = {
   basemapUrl: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
   chart: {
-    axis: "hsl(150 8% 58%)",
-    grid: "hsl(150 11% 24%)",
-    series: "hsl(152 34% 44%)",
+    axis: "hsl(215 18% 68%)",
+    grid: "hsl(222 28% 22%)",
+    series: "hsl(210 80% 62%)",
     tooltip: {
-      background: "hsl(150 14% 15%)",
-      border: "1px solid hsl(150 11% 24%)",
+      background: "hsl(222 42% 12%)",
+      border: "1px solid hsl(222 28% 22%)",
       borderRadius: 8,
-      color: "hsl(150 6% 92%)",
+      color: "hsl(210 25% 96%)",
     },
   },
-  status: { open: "hsl(152 40% 52%)", closed: "hsl(150 8% 45%)", unknown: "hsl(38 92% 50%)" },
+  status: { open: "hsl(152 40% 52%)", closed: "hsl(215 16% 48%)", unknown: "hsl(38 92% 50%)" },
 };
 
 const LIGHT: Omit<ThemeTokens, "isDark"> = {

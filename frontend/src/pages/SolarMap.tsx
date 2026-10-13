@@ -332,7 +332,7 @@ const Index = () => {
     // so the columns would grow past the fold and hide the agent's input box.
     <div className="relative flex h-[calc(100vh-3rem)] min-h-0 w-full flex-col overflow-hidden bg-background">
       <div className="pointer-events-none absolute inset-0 opacity-[0.55] grid-bg" />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1100px_circle_at_18%_12%,hsl(var(--primary)/0.16),transparent_45%),radial-gradient(900px_circle_at_85%_22%,hsl(150_70%_45%/0.10),transparent_45%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1100px_circle_at_18%_12%,hsl(var(--primary)/0.16),transparent_45%),radial-gradient(900px_circle_at_85%_22%,hsl(222_50%_40%/0.16),transparent_45%)]" />
 
       <header className="relative z-30 flex items-center justify-between border-b border-border/70 bg-card/70 px-6 py-3 backdrop-blur-md">
         <div className="flex items-center gap-3.5">

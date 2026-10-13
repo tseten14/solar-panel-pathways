@@ -75,58 +75,67 @@
     --card-shadow: 150 20% 40% / 0.12;
   }
 
-  /* Dark green/teal "climate-tech cockpit" palette. */
+  /* Navy dark theme. Success greens stay green so status still reads at a glance. */
   .dark {
-    --background: 150 17% 11%;
-    --foreground: 150 6% 92%;
+    --background: 222 47% 8%;
+    --foreground: 210 25% 96%;
 
-    --card: 150 14% 15%;
-    --card-foreground: 150 6% 92%;
+    --card: 222 42% 12%;
+    --card-foreground: 210 25% 96%;
 
-    --popover: 150 14% 15%;
-    --popover-foreground: 150 6% 92%;
+    --popover: 222 42% 12%;
+    --popover-foreground: 210 25% 96%;
 
-    --primary: 152 34% 44%;
-    --primary-foreground: 150 8% 98%;
+    --primary: 210 80% 62%;
+    --primary-foreground: 222 47% 8%;
 
-    --secondary: 150 11% 22%;
-    --secondary-foreground: 150 6% 92%;
+    --secondary: 222 32% 18%;
+    --secondary-foreground: 210 25% 96%;
 
-    --muted: 150 11% 22%;
-    --muted-foreground: 150 8% 58%;
+    --muted: 222 32% 18%;
+    --muted-foreground: 215 18% 68%;
 
-    --accent: 152 30% 34%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 217 55% 42%;
+    --accent-foreground: 210 40% 98%;
 
     --destructive: 4 72% 56%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 150 11% 24%;
-    --input: 150 11% 24%;
-    --ring: 152 32% 40%;
+    --border: 222 28% 22%;
+    --input: 222 28% 22%;
+    --ring: 210 70% 55%;
+
+    --sidebar-background: 222 50% 7%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-primary: 210 80% 62%;
+    --sidebar-primary-foreground: 222 47% 8%;
+    --sidebar-accent: 222 36% 16%;
+    --sidebar-accent-foreground: 210 25% 96%;
+    --sidebar-border: 222 28% 18%;
+    --sidebar-ring: 210 70% 55%;
 
     --highlight: 38 92% 56%;
     --highlight-foreground: 35 60% 12%;
     --coral: 12 80% 64%;
-    --ocean: 202 70% 56%;
+    --ocean: 210 80% 62%;
 
     --on-track: 152 40% 52%;
     --at-risk: 38 92% 50%;
     --off-track: 4 72% 56%;
-    --neutral: 150 8% 60%;
+    --neutral: 215 16% 62%;
 
-    --chart-1: 152 32% 28%;
+    --chart-1: 210 70% 55%;
     --chart-2: 38 92% 50%;
     --chart-3: 4 72% 56%;
-    --chart-4: 164 26% 36%;
-    --chart-5: 150 10% 68%;
+    --chart-4: 222 40% 42%;
+    --chart-5: 215 18% 72%;
 
     --status-accept: 152 40% 52%;
     --status-reject: 4 72% 56%;
     --status-conditional: 38 92% 50%;
 
-    --map-tint: 150 17% 9%;
-    --card-shadow: 0 0% 0% / 0.3;
+    --map-tint: 222 47% 6%;
+    --card-shadow: 222 60% 4% / 0.45;
   }
 }
 
