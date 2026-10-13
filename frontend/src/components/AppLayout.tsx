@@ -17,10 +17,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <main className="min-h-0 flex-1 overflow-auto">
             {children}
           </main>
-          <footer className="shrink-0 border-t border-border/60 bg-card/40 px-6 py-3">
-            <p className="text-xs text-muted-foreground">NREL Research Tool</p>
-            <p className="text-xs text-muted-foreground">v1.1.0 — Live Data</p>
-            <p className="mt-1 text-xs text-muted-foreground">EPA LMOP · USGS USPVDB</p>
+          <footer className="shrink-0 border-t border-sidebar-border bg-sidebar px-6 py-4 text-sidebar-foreground/75">
+            <p className="text-xs leading-5">NREL Research Tool</p>
+            <p className="text-xs leading-5">v1.1.0 — Live Data</p>
+            <p className="mt-1 text-xs leading-5">EPA LMOP · USGS USPVDB</p>
           </footer>
         </div>
       </div>
