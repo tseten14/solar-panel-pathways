@@ -330,7 +330,7 @@ const Index = () => {
     // Pin to the viewport minus the 3rem app header, matching LandfillMap. `h-full`
     // cannot resolve here — <main> takes its height from content, not the screen —
     // so the columns would grow past the fold and hide the agent's input box.
-    <div className="relative flex h-[calc(100vh-3rem)] min-h-0 w-full flex-col overflow-hidden bg-background">
+    <div className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
       <div className="pointer-events-none absolute inset-0 opacity-[0.55] grid-bg" />
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(1100px_circle_at_18%_12%,hsl(var(--primary)/0.16),transparent_45%),radial-gradient(900px_circle_at_85%_22%,hsl(222_50%_40%/0.16),transparent_45%)]" />
 

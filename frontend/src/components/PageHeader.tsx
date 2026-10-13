@@ -67,5 +67,5 @@ export function PageContainer({
 
 /** Full-height shell for a map page: fixed header, content fills the rest. */
 export function MapPageShell({ children }: { children: ReactNode }) {
-  return <div className="flex h-[calc(100vh-3rem)] flex-col overflow-hidden">{children}</div>;
+  return <div className="flex h-full min-h-0 flex-col overflow-hidden">{children}</div>;
 }

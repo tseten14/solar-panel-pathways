@@ -1,6 +1,5 @@
 import { Brain, Database, Sun, ScanSearch, ClipboardList } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
 import {
   Sidebar,
   SidebarContent,
@@ -22,7 +21,6 @@ const navItems = [
 export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
-  const location = useLocation();
 
   return (
     <Sidebar collapsible="icon">
@@ -57,14 +55,6 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-
-        {!collapsed && (
-          <div className="mt-auto px-4 py-4 border-t border-sidebar-border">
-            <p className="text-xs text-sidebar-foreground/55">NREL Research Tool</p>
-            <p className="text-xs text-sidebar-foreground/55">v1.1.0 — Live Data</p>
-            <p className="text-xs text-sidebar-foreground/55 mt-1">EPA LMOP · USGS USPVDB</p>
-          </div>
-        )}
       </SidebarContent>
     </Sidebar>
   );
